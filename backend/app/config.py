@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     judge_model: str = "qwen2.5:7b"
     summarizer_model: str = "qwen2.5:7b"
 
-    database_url: str = "postgresql://jarvis:jarvis@localhost:5432/jarvis"
+    database_url: str = "postgresql://jarvis:jarvis@localhost:5433/jarvis"  # docker-compose host port
     trace_backend: str = "postgres"  # "postgres" | "memory"
 
     max_agent_iterations: int = 8

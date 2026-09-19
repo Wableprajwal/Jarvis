@@ -52,3 +52,29 @@ Tools with `requires_confirmation=True` never execute in `dispatch`; the registr
 after a human approves) executes it. Chose gating in the registry over per-tool logic so no tool author can forget it.
 Accepted tradeoff: pending actions are held in process memory in this build (lost on restart); a durable table is the
 obvious production change.
+
+## Phase 2 — Tracing
+
+### One trace table, ordered by a DB-assigned sequence
+Chose a single `trace_events` table (JSONB payload) with a `BIGSERIAL seq` as the ordering key over separate per-type
+tables or ordering by timestamp, because the same rows feed the UI trace view, the metrics dashboard *and* the eval
+harness, and timestamps collide when concurrent tool calls finish in the same millisecond. `seq` gives a total order
+even across processes. Accepted tradeoff: JSONB payloads are schemaless, so payload shape per event type is a
+convention enforced by the loop rather than by the database.
+
+### The loop logs before it continues
+`tool_call` is written *before* execution and `tool_result` after, so a hung or crashing tool still leaves a record of
+what was attempted. The orchestrator's `route_decision` (agent, task, stated reason) is written by the route tool
+between the two, which is why the trace reads model_call -> tool_call -> route_decision -> <sub-agent events> ->
+tool_result -> model_call -> final_response. All events of a request share a `turn_id`, sub-agents included.
+
+### Tracer is an interface; Postgres is one implementation
+`Tracer` (abstract) with `NullTracer`, `InMemoryTracer` (unit tests, eval replay) and `PostgresTracer`. The read side
+(`TraceStore`: turn/session lookups, per-agent p50/p95 model latency via `percentile_cont`, tool success rate,
+tokens/session) is separate from the write side so the hot path stays a single INSERT.
+
+### A fresh database instead of the pre-existing `jarvis` one
+The local Postgres already contained a `jarvis` database from an earlier, differently-shaped schema (text payloads, no
+`agent_name`) holding real rows. Chose to leave it untouched and create `jarvis_platform` over migrating/dropping it,
+because destroying someone's data to satisfy a new schema is not a call the build should make. Accepted tradeoff: two
+databases on the dev machine; compose users are unaffected (they get a clean `jarvis` DB in the container).
