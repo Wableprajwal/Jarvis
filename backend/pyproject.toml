@@ -16,7 +16,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest==9.1.1", "pytest-asyncio==1.4.0"]
-rag = ["sentence-transformers", "rank-bm25", "pgvector"]
+rag = ["numpy==2.5.3", "rank-bm25==0.2.2", "sentence-transformers==6.1.0"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -98,3 +98,20 @@ schema violation): one bad call rejects the whole batch so the model never half-
 ### Verified against a real model, not just mocks
 The Phase 1 flow (orchestrator -> code agent -> `read_file` -> answer) is exercised against local `qwen2.5:7b` in both native
 and prompted modes (`tests/test_live_ollama.py`; auto-skipped when Ollama is not running so CI stays model-free).
+
+## Phase 4 — Multi-agent: RAG, Research, Ops
+
+### Embedding model decoupled from the chat model
+Chose a local `bge-small-en-v1.5` embedder behind an `Embedder` interface, independent of the chat `ModelProvider`, over reusing the chat model's embeddings, because RAG then works fully offline and swapping (or upgrading) the chat model never invalidates stored vectors. Every chunk is tagged with `Embedder.name` and searches are scoped to it, so chunks from a different embedder are invisible rather than silently wrong. Accepted tradeoff: a second model to ship; vectors are only comparable within one embedder.
+
+### Hybrid retrieval over pure-vector
+Chose dense top-20 + BM25 top-20, fused with reciprocal-rank fusion, then a cross-encoder rerank to the top 5 with citations, over dense-only, because BM25 catches exact identifiers, alert names and config keys (`HalcyonQueueDepth`, `hnsw.ef_search`) that embeddings blur, while the reranker fixes ordering. Accepted tradeoff: more moving parts and a rerank latency cost per query.
+
+### RAG is an agent-chosen tool, not always-injected
+Chose `rag_search` as a Tool the Research agent decides to call over force-injecting retrieved context into every prompt, because always-RAG wastes context and degrades tasks that need no retrieval, and tool calls are traceable and gradable (the eval checks retrieval happened and grounded the answer). Accepted tradeoff: a weak model may skip retrieval or under-search; the Research prompt requires search-first and an explicit "I could not find this in the notes" when unsupported.
+
+### pgvector with an array-store fallback (and an in-memory store)
+Chose pgvector (HNSW) as the primary store, a `float8[]` + numpy cosine fallback picked automatically by a factory, and an `InMemoryVectorStore` for CI/eval, over requiring the extension everywhere, because dev Postgres often lacks it (this machine's Postgres 14 does; the compose image `pgvector/pgvector:pg16` has it). Accepted tradeoff: the fallback is a linear scan (fine to tens of thousands of chunks); `PgVectorStore` is written but was not exercised against a live pgvector in this environment.
+
+### Confirmation gating for calendar_create / email_send
+Chose gating in the registry (tools declare `requires_confirmation=True`; nothing executes until `registry.confirm(id)`) over trusting the prompt to ask first, because irreversible actions need a human gate and a hallucinated or injected call must not act. Accepted tradeoff: an extra user step, and semantic errors JSON Schema cannot catch (bad dates, missing drafts) only surface after approval.
