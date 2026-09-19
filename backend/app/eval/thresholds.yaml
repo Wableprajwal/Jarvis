@@ -1,0 +1,8 @@
+# Minimum pass rate per category for `make eval` (offline, MockProvider). CI fails if any category is below.
+default: 0.9
+categories:
+  routing: 0.9
+  tool-selection: 1.0
+  RAG-grounding: 1.0
+  memory-recall: 1.0
+  refusal/edge-case: 1.0

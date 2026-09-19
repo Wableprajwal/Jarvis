@@ -1,0 +1,96 @@
+# Layer 1 (deterministic, no judge): did the orchestrator pick the right agent(s)?
+# expected_agent: name | [ordered chain] | none
+
+# --- code agent ---
+- id: route-code-explain-file
+  input: "What does the function in utils/retry.py do? Read the source file and explain it."
+  expected_agent: code
+  category: routing
+- id: route-code-unit-tests
+  input: "Generate unit tests for the parse_config function in config_loader.py."
+  expected_agent: code
+  category: routing
+- id: route-code-pr-description
+  input: "Summarize my git diff into a pull request description."
+  expected_agent: code
+  category: routing
+- id: route-code-codebase-question
+  input: "Where in the codebase is the database connection pool created? Look through the source files."
+  expected_agent: code
+  category: routing
+- id: route-code-test-coverage
+  input: "Write pytest unit tests for the function in scheduler.py that computes the next run time."
+  expected_agent: code
+  category: routing
+- id: route-code-diff-review
+  input: "Look at the git diff on this branch and write the pull request summary."
+  expected_agent: code
+  category: routing
+
+# --- research agent ---
+- id: route-research-runbook
+  input: "According to our notes, what is the escalation procedure when the payments service pages on-call?"
+  expected_agent: research
+  category: routing
+- id: route-research-adr
+  input: "Search our technical docs for the decision about retry and backoff policy and cite the source."
+  expected_agent: research
+  category: routing
+- id: route-research-index-notes
+  input: "What do our notes say about Postgres indexing guidelines? Give me a cited answer."
+  expected_agent: research
+  category: routing
+- id: route-research-deploy-checklist
+  input: "Find the deploy checklist in our documentation and tell me the steps with citations."
+  expected_agent: research
+  category: routing
+- id: route-research-style-guide
+  input: "What does our engineering style guide say about naming? Look it up in the notes."
+  expected_agent: research
+  category: routing
+
+# --- ops agent ---
+- id: route-ops-calendar-list
+  input: "What meetings do I have on my calendar tomorrow?"
+  expected_agent: ops
+  category: routing
+- id: route-ops-calendar-create
+  input: "Schedule a 30 minute calendar event with the platform team on Friday at 2pm."
+  expected_agent: ops
+  category: routing
+- id: route-ops-email-search
+  input: "Search my email for messages from the vendor about the invoice."
+  expected_agent: ops
+  category: routing
+- id: route-ops-email-send
+  input: "Send an email to Dana telling her the release is delayed until Monday."
+  expected_agent: ops
+  category: routing
+- id: route-ops-email-draft
+  input: "Draft an email to the team announcing the maintenance window."
+  expected_agent: ops
+  category: routing
+
+# --- chains (ordered) ---
+- id: route-chain-research-then-code
+  input: "Look up our retry policy in the technical notes, then write unit tests for the retry function based on that policy."
+  expected_agent: [research, code]
+  category: routing
+- id: route-chain-code-then-ops
+  input: "Summarize my git diff into a pull request description, then email that summary to Dana."
+  expected_agent: [code, ops]
+  category: routing
+
+# --- no agent needed ---
+- id: route-none-greeting
+  input: "Hello there, good morning!"
+  expected_agent: none
+  category: routing
+- id: route-none-thanks
+  input: "Thanks, that was great."
+  expected_agent: none
+  category: routing
+- id: route-none-smalltalk
+  input: "Who are you and what can you do?"
+  expected_agent: none
+  category: routing

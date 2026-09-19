@@ -132,3 +132,56 @@ Chose an explicit `remember_fact` tool plus an extraction pass over a closed ses
 
 ### One interface, two backends
 Chose a `MemoryStore` interface with a shared summarizing base, `PostgresMemoryStore` and `InMemoryMemoryStore`, both run through the same parametrized contract tests, so swapping storage never touches harness/agents and eval replay needs no database. Accepted tradeoff: storage primitives are async even for the in-memory store.
+
+## Phase 7 — Evaluation harness
+
+### Two layers: deterministic routing eval + task eval with a judge
+Chose to measure routing separately from task quality: the routing layer runs the real orchestrator against the real agent
+names/descriptions but with *stub* sub-agents, and compares the chosen agent(s) to `expected_agent` (name, ordered chain, or
+"none"). No judge is involved, so it is exact, cheap and re-runnable, and a failure points at the prompt/descriptions rather than
+at tool behaviour. The task layer runs the full pipeline and scores it with (a) deterministic checks - tool sequence,
+forbidden tools, required/forbidden text, "did retrieval actually return the grounding source", "no irreversible side effect
+happened without confirmation" - and (b) an LLM judge (task success, grounding fidelity, tool correctness, safety, with
+rationale). A scenario passes only if both do. Accepted tradeoff: deterministic checks are blunt (substring matching) and can
+false-fail a correct paraphrase; the judge covers meaning but is itself a model, so its thresholds are configurable.
+
+### The judge is a separate ModelProvider from the agents under test
+Chose an independently constructed judge provider (`judge_model` config; asserted in a test that it never shares an instance
+with any agent) over reusing the agent's model, because a weak local agent grading itself is uninformative and grading must
+not share state or bias with the system being graded. Accepted tradeoff: a stronger judge model costs more/loads more memory.
+
+### CI runs against MockProvider deterministically, and still catches regressions
+Two offline devices make `make eval` meaningful without a model: (1) routing scenarios use `SimulatedOrchestratorModel`, a
+deterministic policy whose decision is a *function of the agent-description text it is shown*, so editing a description or prompt
+genuinely changes routing accuracy; (2) task scenarios carry a compact `mock:` replay script that drives the real registry,
+allow-lists, confirmation gate, tools, RAG (in-memory store + hashing embedder) and memory. This is "offline replay + CI
+gating": it fails when the harness, tools, gate or retrieval regress, and (via the simulated router) when prompts do. Tests prove
+it by injection: breaking the Research description drops routing pass-rate and the diff flags it; disabling the `email_send`
+confirmation gate fails the safety scenario; emptying the RAG index fails grounding. Accepted tradeoff: the simulated model
+measures *configuration sensitivity*, not real language understanding; the same suite runs with `mode=live` against Ollama for
+the real number, and the offline number must never be quoted as model quality.
+
+### Regression = scorecard diff against the previous run of the same mode
+Every run stores `{run_id, config_hash, ts, scores_by_category, details}` (`eval_runs`, or in-memory) and diffs against the
+previous run: category pass-rate drops plus individual scenarios that flipped pass -> fail. `config_hash` fingerprints
+provider/models, orchestrator prompt, each agent's description/prompt/tool allow-list and every tool schema, so any prompt, skill,
+tool or model change yields a new hash. `make eval` additionally enforces per-category thresholds (`thresholds.yaml`) so the gate
+does not depend on a stored baseline. Accepted tradeoff: two mechanisms (relative diff for the dashboard, absolute floor for CI).
+
+### What the eval found while being built
+The first chain scenario failed for a real reason: `OrchestratorResult.route_decisions` were grouped per route tool (agent-list
+order) instead of call order, so "research -> code" was reported as "code -> research". Fixed with a per-turn ledger appended in
+call order, plus a regression test. This is the eval harness paying for itself.
+
+## Wiring notes (composition root and API)
+
+### Tolerant capability grants
+`SubAgent` grants only the tools of its declared allow-list that a deployment actually registered (warning for the rest) rather
+than failing fast, so an agent can declare its full capability set while tests/deployments register a subset. This can only
+*reduce* an agent's capabilities, never widen them; the strict `registry.grant()` (raises on unknown) remains the default.
+
+### One composition root
+`app/bootstrap.py` is the only module that knows concrete classes; agents, orchestrator, harness and eval depend on interfaces.
+`build_system(...)` takes injectable providers/stores/backends, which is what lets the same wiring serve production, the API tests
+and every eval mode. The API degrades gracefully: no Postgres -> in-memory traces/memory/eval store; RAG failure -> Research agent
+simply lacks `rag_search`.
