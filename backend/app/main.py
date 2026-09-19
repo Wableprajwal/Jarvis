@@ -22,6 +22,8 @@ from app.harness.memory import InMemoryMemoryStore, PostgresMemoryStore
 from app.observability.store import InMemoryTraceStore, PostgresTracer, TraceStore
 from app.observability.trace import Tracer
 from app.providers.ollama_provider import ProviderError
+from app.tools.code_exec import CodeExecTool
+from app.tools.credentials import CredentialStore, RedactingProvider, RedactingTracer
 from app.tools.memory_tool import current_user_var
 
 logger = logging.getLogger("jarvis")
@@ -43,7 +45,14 @@ class AppState:
 
 
 async def create_state(settings: Settings, provider_for: ProviderFor | None = None, use_db: bool | None = None) -> AppState:
-    provider_for = provider_for or default_provider_for(settings)
+    # Credential isolation (Phase 5): secrets never reach a prompt, a tool schema or a trace payload.
+    # provider_for and the tracer are wrapped here, once, so every consumer built from them below -
+    # memory's summarizer, every agent, the judge, the registry's tool results - is covered.
+    credentials = CredentialStore.from_settings(settings)
+    redactor = credentials.redactor()
+    base_provider_for = provider_for or default_provider_for(settings)
+    provider_for = lambda role: RedactingProvider(base_provider_for(role), redactor)  # noqa: E731
+
     db: Database | None = None
     if use_db is None:
         use_db = settings.trace_backend == "postgres"
@@ -54,14 +63,15 @@ async def create_state(settings: Settings, provider_for: ProviderFor | None = No
             logger.warning("Postgres unavailable (%s); falling back to in-memory storage", exc)
 
     if db:
-        tracer: Tracer = PostgresTracer(db)
-        traces = TraceStore(db)
-        memory = PostgresMemoryStore(db, provider_for("summarizer"), tracer)
+        raw_tracer: Tracer = PostgresTracer(db)
+        traces = TraceStore(db)  # reads rows that were already scrubbed on write, below
         eval_store: EvalRunStore = PostgresEvalStore(db)
     else:
-        tracer = traces = InMemoryTraceStore()
-        memory = InMemoryMemoryStore(provider_for("summarizer"), tracer)
+        raw_tracer = traces = InMemoryTraceStore()
         eval_store = InMemoryEvalStore()
+    tracer: Tracer = RedactingTracer(raw_tracer, redactor)
+    memory = (PostgresMemoryStore(db, provider_for("summarizer"), tracer) if db
+              else InMemoryMemoryStore(provider_for("summarizer"), tracer))
 
     retriever = None
     docs = Path(settings.docs_dir) if settings.docs_dir else DEFAULT_DOCS
@@ -75,11 +85,12 @@ async def create_state(settings: Settings, provider_for: ProviderFor | None = No
         settings, tracer=tracer, provider_for=provider_for, memory=memory, retriever=retriever,
         extra_code_tools=code_exec_tools(settings),
     )
+    system.registry.redactor = redactor  # scrubs ToolResult output/error before it reaches the model or a trace
     return AppState(settings, system, tracer, traces, eval_store, retriever, provider_for, db, "postgres" if db else "memory")
 
 
 def code_exec_tools(settings: Settings) -> list:
-    return []
+    return [CodeExecTool(settings.workspace_root)]
 
 
 # ------------------------------------------------------------------------------- schemas

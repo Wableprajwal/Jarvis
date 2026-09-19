@@ -185,3 +185,40 @@ than failing fast, so an agent can declare its full capability set while tests/d
 `build_system(...)` takes injectable providers/stores/backends, which is what lets the same wiring serve production, the API tests
 and every eval mode. The API degrades gracefully: no Postgres -> in-memory traces/memory/eval store; RAG failure -> Research agent
 simply lacks `rag_search`.
+
+## Phase 5 — Sandboxing and credential isolation
+
+### Subprocess/container sandbox over in-process execution
+Chose to run `code_exec` in a separate, isolated process (never in-process) because a single malformed or hostile
+generation running in-process could touch the harness's own filesystem, network and credentials directly - unacceptable
+blast radius for code an LLM wrote. Isolation is enforced on every axis the spec calls out: no network (verified: TCP
+connect, DNS, UDP, raw HTTP, even local Unix sockets all fail), a read-only allow-list filesystem (only the files a task
+explicitly lists are visible, at their real relative path, read-only; everything else in the workspace - including
+sensitive filenames like `.env`, `id_rsa*`, `*.pem` - is invisible even if it happens to be under the workspace root),
+a scratch directory for writes that is deleted afterward, a hard wall-clock timeout that kills the whole process group
+(tested against busy loops, blocking sleeps, code that ignores SIGTERM, and thread-spawning code), a memory cap (tested
+by killing both a single huge allocation and a slow 1GB creep), a process-table cap (fork bombs are contained and leave
+no orphans), and a scrubbed environment (the sandboxed process sees none of the harness's env vars, `os.environ` included).
+
+### Fail closed: no isolating backend means no execution
+`code_exec` selects a `SandboxBackend` at runtime (Docker with `--network none --read-only --cap-drop ALL`, macOS
+`sandbox-exec` with a deny-default Seatbelt profile, Linux `bwrap`/`unshare` with fresh namespaces) and returns a clear
+tool error - never falls back to plain `subprocess` - when none can prove its isolation on the host. Verified on this dev
+machine (macOS, Docker not running): the Seatbelt backend is selected and every isolation property above is proven by a
+real, unmocked test (busy loops actually get killed, sockets actually fail to connect, `/etc/passwd` actually cannot be
+read). Docker/`bwrap`/`unshare` variants of the same tests skip with a stated reason rather than being silently omitted -
+the CI machine (Linux, Docker available) exercises the other backends the same way.
+
+### Credential isolation: one store, three redaction layers, fail closed
+`CredentialStore` is the only place a secret is read from settings/env; it hands secrets out solely as constructor-time
+closures (`store.token_provider("gmail_token")`) - there is no `get(name) -> str`, and the store cannot be printed,
+pickled or JSON-encoded by accident. The model never sees a secret through any normal path. Three independent layers
+catch the abnormal path - a tool or an API accidentally echoing a token back: `RedactingProvider` scrubs every message
+before it reaches the model (and the model's reply before it goes anywhere else), `RedactingTracer` scrubs every
+`TraceEvent` before it is stored, and `ToolRegistry(redactor=...)` scrubs every `ToolResult` before it leaves `dispatch`.
+Each layer alone would have caught the exact-value, encoded (base64/hex/url/JSON-escaped), and well-known-shape
+(Bearer/JWT/`sk-`/`ghp_`/`AKIA`/Slack/PEM) test cases; keeping all three means a single bypassed layer does not leak.
+Redaction fails closed: if scrubbing itself raises on a pathological object, the registry withholds the result rather
+than passing it through unscrubbed. Accepted tradeoff: redaction is pattern-based best-effort, not a formal guarantee -
+a secret that shares no substring with anything registered and matches no known shape could still slip through; this is
+why credentials never reach the model through a normal path in the first place.
