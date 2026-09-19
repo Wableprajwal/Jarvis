@@ -146,11 +146,15 @@ class ToolRegistry:
             raise ValueError(f"tool '{tool.name}' already registered")
         self._tools[tool.name] = tool
 
-    def grant(self, agent_name: str, tool_names: list[str]) -> None:
+    def grant(self, agent_name: str, tool_names: list[str], missing_ok: bool = False) -> list[str]:
+        """Allow `agent_name` to use `tool_names`. Unregistered names raise, unless `missing_ok`
+        (an agent may declare tools a deployment did not register; it then simply lacks them - a
+        smaller capability set, never a larger one). Returns the names that were skipped."""
         missing = [n for n in tool_names if n not in self._tools]
-        if missing:
+        if missing and not missing_ok:
             raise UnknownTool(f"cannot grant unregistered tools to '{agent_name}': {missing}")
-        self._grants.setdefault(agent_name, set()).update(tool_names)
+        self._grants.setdefault(agent_name, set()).update(n for n in tool_names if n in self._tools)
+        return missing
 
     def get(self, agent_name: str, tool_name: str) -> Tool:
         if tool_name not in self._tools:

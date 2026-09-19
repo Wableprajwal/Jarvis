@@ -163,3 +163,30 @@ async def test_provider_failure_is_traced_and_raised(registry):
     with pytest.raises(MockScriptExhausted):
         await run_agent_loop(MockProvider(), [], [], registry, tracer, "s1", "agent")
     assert tracer.of_type("error")[0].payload["stage"] == "model_call"
+
+
+async def test_chained_routes_are_reported_in_call_order_not_agent_order(registry):
+    """Regression: decisions were grouped per route tool, so a chain code<-research came out as [code, research]."""
+    from app.agents.base import SubAgent
+
+    class Second(SubAgent):
+        name, description, system_prompt, tool_names = "aaa_first_in_list", "first alphabetically", "s", []
+
+    class Third(SubAgent):
+        name, description, system_prompt, tool_names = "zzz_last_in_list", "last alphabetically", "s", []
+
+    agents = [
+        Second(MockProvider(script=[text_response("A")]), registry),
+        Third(MockProvider(script=[text_response("Z")]), registry),
+    ]
+    orch = Orchestrator(
+        MockProvider(script=[
+            tool_call_response("route_to_zzz_last_in_list", {"task": "t1"}),
+            tool_call_response("route_to_aaa_first_in_list", {"task": "t2"}),
+            text_response("done"),
+        ]),
+        agents, InMemoryTracer(),
+    )
+    result = await orch.handle("chain", "s1")
+    assert result.routed_agents == ["zzz_last_in_list", "aaa_first_in_list"]
+    assert [r.text for r in result.agent_results] == ["Z", "A"]

@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import logging
 from abc import ABC
 
 from app.harness.loop import AgentResult, run_agent_loop
 from app.observability.trace import Tracer
 from app.providers.base import ModelProvider
 from app.tools.registry import ToolRegistry
+
+
+logger = logging.getLogger(__name__)
 
 
 class SubAgent(ABC):
@@ -18,7 +22,9 @@ class SubAgent(ABC):
         self.provider = provider  # each agent owns its provider: cheap model for routing, stronger for code
         self.registry = registry
         self.max_iterations = max_iterations
-        registry.grant(self.name, self.tool_names)
+        skipped = registry.grant(self.name, self.tool_names, missing_ok=True)
+        if skipped:
+            logger.warning("agent '%s' declares tools that are not registered and will lack them: %s", self.name, skipped)
 
     async def run(
         self,
@@ -28,7 +34,8 @@ class SubAgent(ABC):
         session_id: str,
         turn_id: str | None = None,
     ) -> AgentResult:
-        tools = [self.registry.get(self.name, n) for n in self.tool_names]
+        available = {t.name: t for t in self.registry.tools_for(self.name)}
+        tools = [available[n] for n in self.tool_names if n in available]  # declared order
         messages = [
             {"role": "system", "content": self.system_prompt},
             *context,

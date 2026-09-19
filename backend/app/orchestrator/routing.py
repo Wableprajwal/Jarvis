@@ -18,7 +18,9 @@ def route_tool_name(agent_name: str) -> str:
 class RouteTool(Tool):
     requires_confirmation = False
 
-    def __init__(self, agent: SubAgent, tracer: Tracer, session_id: str, turn_id: str | None):
+    def __init__(
+        self, agent: SubAgent, tracer: Tracer, session_id: str, turn_id: str | None, ledger: list[dict] | None = None
+    ):
         self.agent = agent
         self.name = route_tool_name(agent.name)
         self.description = f"Delegate a task to the {agent.name} agent. {agent.description}"
@@ -39,14 +41,19 @@ class RouteTool(Tool):
         self._turn_id = turn_id
         self.decisions: list[dict] = []
         self.results: list[AgentResult] = []
+        # Shared by all route tools of a turn, appended in call order, so chains keep their real order.
+        self._ledger = ledger if ledger is not None else []
 
     async def execute(self, arguments: dict) -> ToolResult:
         decision = {"agent": self.agent.name, "task": arguments["task"], "reason": arguments.get("reason")}
         self.decisions.append(decision)
+        entry: dict = {"decision": decision, "result": None}
+        self._ledger.append(entry)
         await self._tracer.log(self._session_id, ROUTER_NAME, "route_decision", decision, turn_id=self._turn_id)
         sw = Stopwatch()
         result = await self.agent.run(arguments["task"], [], self._tracer, self._session_id, self._turn_id)
         self.results.append(result)
+        entry["result"] = result
         payload: dict = {"agent": self.agent.name, "answer": result.text, "latency_ms": round(sw.ms(), 1)}
         if result.truncated:
             payload["warning"] = "agent hit its iteration cap; the answer may be incomplete"

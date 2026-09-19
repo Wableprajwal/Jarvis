@@ -8,7 +8,7 @@ from app.harness.loop import AgentResult, run_agent_loop
 from app.observability.trace import Tracer
 from app.orchestrator.routing import ROUTER_NAME, RouteTool
 from app.providers.base import ModelProvider
-from app.tools.registry import ToolRegistry
+from app.tools.registry import Tool, ToolRegistry
 
 DEFAULT_SYSTEM_PROMPT = """You are Jarvis, the orchestrator of a team of specialist agents for engineers.
 You do not do specialist work yourself. You decide which agent should, by calling its route_to_<agent> tool.
@@ -20,7 +20,8 @@ Rules:
 - Call exactly the agent(s) the request needs. Write a complete, self-contained `task` for each call (the agent sees nothing else) and a one-sentence `reason`.
 - If a task needs several agents in order (e.g. research first, then code), call them one after another and pass the earlier agent's findings into the next task.
 - Independent sub-tasks may be delegated in the same turn.
-- If the request is plain conversation that needs no agent, answer directly.
+- If the request is plain conversation that needs no agent, answer directly. If the user asks you to remember something, call remember_fact (when available).
+- Answer questions about the user's own remembered facts (listed in the conversation) directly.
 - When agents have answered, give the user one clear final answer. Never claim an action was performed if an agent reported it is pending user confirmation - say it is awaiting approval.
 """
 
@@ -48,12 +49,14 @@ class Orchestrator:
         tracer: Tracer,
         max_iterations: int = 8,
         system_prompt: str | None = None,
+        extra_tools: list[Tool] | None = None,
     ):
         self.provider = provider
         self.agents = agents
         self.tracer = tracer
         self.max_iterations = max_iterations
         self._system_prompt = system_prompt
+        self.extra_tools = extra_tools or []  # non-routing tools the orchestrator itself may call (e.g. remember_fact)
 
     def system_prompt(self) -> str:
         if self._system_prompt:
@@ -73,10 +76,13 @@ class Orchestrator:
         # sub-agent event lands in the same trace, and live in a private registry so the
         # orchestrator's allow-list contains routing tools and nothing else.
         registry = ToolRegistry()
-        route_tools = [RouteTool(a, self.tracer, session_id, turn_id) for a in self.agents]
+        ledger: list[dict] = []
+        route_tools = [RouteTool(a, self.tracer, session_id, turn_id, ledger) for a in self.agents]
         for t in route_tools:
             registry.register(t)
-        registry.grant(ROUTER_NAME, [t.name for t in route_tools])
+        for t in self.extra_tools:
+            registry.register(t)
+        registry.grant(ROUTER_NAME, [t.name for t in route_tools] + [t.name for t in self.extra_tools])
 
         messages = [
             {"role": "system", "content": self.system_prompt()},
@@ -87,8 +93,8 @@ class Orchestrator:
             self.provider, messages, registry.tools_for(ROUTER_NAME), registry, self.tracer,
             session_id, ROUTER_NAME, self.max_iterations, turn_id=turn_id,
         )
-        decisions = [d for t in route_tools for d in t.decisions]
-        agent_results = [r for t in route_tools for r in t.results]
+        decisions = [e["decision"] for e in ledger]  # call order, not agent-list order
+        agent_results = [e["result"] for e in ledger if e["result"] is not None]
         return OrchestratorResult(
             text=loop_result.text,
             turn_id=turn_id,
