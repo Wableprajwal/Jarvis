@@ -34,6 +34,9 @@ class ModelResponse:
     tool_calls: list[ToolCall] = field(default_factory=list)
     stop_reason: str = "end_turn"  # "end_turn" | "tool_use" | "max_tokens"
     usage: Usage = field(default_factory=Usage)
+    # Set when the model's output could not be turned into a valid response (e.g. a malformed
+    # tool-call block). The harness feeds this back to the model instead of crashing.
+    error: str | None = None
 
 
 class ModelProvider(ABC):

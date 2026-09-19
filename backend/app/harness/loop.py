@@ -14,6 +14,10 @@ from app.providers.base import ModelProvider, ToolCall, Usage, assistant_message
 from app.tools.registry import Tool, ToolRegistry, ToolResult
 
 MAX_ITERATIONS_TEXT = "<max iterations reached>"
+MALFORMED_OUTPUT_FEEDBACK = (
+    "Your last reply could not be processed: {error}\n"
+    "Correct it and try again. Either emit a well-formed tool call, or give your final answer in plain text."
+)
 
 
 @dataclass
@@ -73,6 +77,7 @@ async def run_agent_loop(
                 "stop_reason": resp.stop_reason,
                 "text": resp.text,
                 "tool_calls": [c.name for c in resp.tool_calls],
+                "parse_error": resp.error,
                 "prompt_tokens": resp.usage.prompt_tokens,
                 "completion_tokens": resp.usage.completion_tokens,
             },
@@ -83,6 +88,10 @@ async def run_agent_loop(
             if call.id is None:
                 call.id = f"call_{uuid.uuid4().hex[:8]}"
         messages.append(assistant_message(resp))
+
+        if resp.error and not resp.tool_calls:
+            messages.append({"role": "user", "content": MALFORMED_OUTPUT_FEEDBACK.format(error=resp.error)})
+            continue
 
         if resp.tool_calls:
             outcomes = await asyncio.gather(

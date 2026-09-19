@@ -21,4 +21,5 @@ rag = ["sentence-transformers", "rank-bm25", "pgvector"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = ["live: requires a running local model (auto-skipped when unavailable)"]
 pythonpath = ["."]

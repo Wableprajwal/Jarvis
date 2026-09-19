@@ -78,3 +78,23 @@ The local Postgres already contained a `jarvis` database from an earlier, differ
 `agent_name`) holding real rows. Chose to leave it untouched and create `jarvis_platform` over migrating/dropping it,
 because destroying someone's data to satisfy a new schema is not a call the build should make. Accepted tradeoff: two
 databases on the dev machine; compose users are unaffected (they get a clean `jarvis` DB in the container).
+
+## Phase 3 — Ollama and real tool-calling
+
+### OpenAI-compatible endpoint, native tools when the model supports them
+Chose Ollama's `/v1/chat/completions` over its native `/api/chat` because the OpenAI shape is the de-facto wire format:
+swapping in vLLM, llama.cpp-server or a hosted API later is a base-URL change, not a rewrite. Native function-calling is
+auto-selected by model family (`qwen2.5`, `llama3.1`, ...) and can be forced per instance; everything else goes through
+`PromptedToolCallParser`. Accepted tradeoff: a hard-coded family allow-list must be maintained (overridable via
+`native_tools=`).
+
+### Malformed model output is data, not an exception
+Chose a first-class `ModelResponse.error` (set by the provider/parser) that the loop turns into a corrective user message
+and a retry, over raising. A 7B model emits broken JSON regularly; each retry consumes an iteration so it is bounded by the
+same hard cap. The parser is deliberately lenient about things that are harmless (code fences, prose around the block,
+trailing commas, `name`/`parameters` aliases, stringified arguments) and strict about things that are not (unknown tool,
+schema violation): one bad call rejects the whole batch so the model never half-executes a plan.
+
+### Verified against a real model, not just mocks
+The Phase 1 flow (orchestrator -> code agent -> `read_file` -> answer) is exercised against local `qwen2.5:7b` in both native
+and prompted modes (`tests/test_live_ollama.py`; auto-skipped when Ollama is not running so CI stays model-free).
