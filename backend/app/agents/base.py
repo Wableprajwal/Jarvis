@@ -1,0 +1,40 @@
+from __future__ import annotations
+
+from abc import ABC
+
+from app.harness.loop import AgentResult, run_agent_loop
+from app.observability.trace import Tracer
+from app.providers.base import ModelProvider
+from app.tools.registry import ToolRegistry
+
+
+class SubAgent(ABC):
+    name: str
+    description: str  # the orchestrator reads this to decide routing
+    system_prompt: str
+    tool_names: list[str]  # explicit allow-list, NOT the global registry
+
+    def __init__(self, provider: ModelProvider, registry: ToolRegistry, max_iterations: int = 8):
+        self.provider = provider  # each agent owns its provider: cheap model for routing, stronger for code
+        self.registry = registry
+        self.max_iterations = max_iterations
+        registry.grant(self.name, self.tool_names)
+
+    async def run(
+        self,
+        task: str,
+        context: list[dict],
+        tracer: Tracer,
+        session_id: str,
+        turn_id: str | None = None,
+    ) -> AgentResult:
+        tools = [self.registry.get(self.name, n) for n in self.tool_names]
+        messages = [
+            {"role": "system", "content": self.system_prompt},
+            *context,
+            {"role": "user", "content": task},
+        ]
+        return await run_agent_loop(
+            self.provider, messages, tools, self.registry, tracer, session_id, self.name,
+            self.max_iterations, turn_id=turn_id,
+        )

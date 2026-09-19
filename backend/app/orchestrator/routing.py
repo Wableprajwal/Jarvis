@@ -1,0 +1,56 @@
+"""Routing-as-tool-calling: each sub-agent is presented to the orchestrator as a tool
+`route_to_<agent>`. Invoking it dispatches to the agent and returns the agent's answer as the
+tool result, so the orchestrator can finish, or chain to another agent, in the same loop."""
+from __future__ import annotations
+
+from app.agents.base import SubAgent
+from app.harness.loop import AgentResult
+from app.observability.trace import Stopwatch, Tracer
+from app.tools.registry import Tool, ToolResult
+
+ROUTER_NAME = "orchestrator"
+
+
+def route_tool_name(agent_name: str) -> str:
+    return f"route_to_{agent_name}"
+
+
+class RouteTool(Tool):
+    requires_confirmation = False
+
+    def __init__(self, agent: SubAgent, tracer: Tracer, session_id: str, turn_id: str | None):
+        self.agent = agent
+        self.name = route_tool_name(agent.name)
+        self.description = f"Delegate a task to the {agent.name} agent. {agent.description}"
+        self.input_schema = {
+            "type": "object",
+            "properties": {
+                "task": {
+                    "type": "string",
+                    "description": "A complete, self-contained task for the agent. Include any context it needs.",
+                },
+                "reason": {"type": "string", "description": "One sentence: why this agent is the right one."},
+            },
+            "required": ["task"],
+            "additionalProperties": False,
+        }
+        self._tracer = tracer
+        self._session_id = session_id
+        self._turn_id = turn_id
+        self.decisions: list[dict] = []
+        self.results: list[AgentResult] = []
+
+    async def execute(self, arguments: dict) -> ToolResult:
+        decision = {"agent": self.agent.name, "task": arguments["task"], "reason": arguments.get("reason")}
+        self.decisions.append(decision)
+        await self._tracer.log(self._session_id, ROUTER_NAME, "route_decision", decision, turn_id=self._turn_id)
+        sw = Stopwatch()
+        result = await self.agent.run(arguments["task"], [], self._tracer, self._session_id, self._turn_id)
+        self.results.append(result)
+        payload: dict = {"agent": self.agent.name, "answer": result.text, "latency_ms": round(sw.ms(), 1)}
+        if result.truncated:
+            payload["warning"] = "agent hit its iteration cap; the answer may be incomplete"
+        if result.pending_confirmation_ids:
+            payload["pending_confirmation_ids"] = result.pending_confirmation_ids
+            payload["note"] = "actions are awaiting user confirmation and have NOT been performed"
+        return ToolResult.success(payload)
