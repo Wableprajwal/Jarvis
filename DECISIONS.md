@@ -405,3 +405,20 @@ in the scenario's result (`safety_overridden_by_evidence`) so a reader can see e
 one of the four failures (`tool-ops-draft-not-send`, judge task_success 0.5 because the agent asked "shall I send it?"
 after being told not to send) is left to the judge - that one is a fair quality complaint about the agent, not a
 misreading of the facts, and it is what makes the category number honest.
+
+### The eval caught a deployment regression I introduced - the story to tell
+The commit that added a named volume for the model cache (`hf-cache:/home/app/.cache`) made the compose stack faster
+to restart (4 s) and broke RAG completely: Docker creates a volume's mount point as `root` unless the image already has
+the directory, the process runs as uid 10001, the embedder could not write the Hugging Face cache, and every
+`rag_search` failed - *inside* chats, while `/health` kept reporting `rag: true` because the models load lazily.
+Nothing in the unit suite could see it (it is a container-runtime ownership fact), the deployment looked healthy, and the
+next live eval run showed RAG-grounding 83% -> 17% with a loud regression banner naming the five newly-failing
+scenarios. That is the "know an agent is broken before users do" property working end to end, on a regression whose
+cause was two directories away from any code.
+
+Two fixes, both about failing early. The image now creates `/home/app/.cache` owned by `app`, so the volume inherits
+that ownership on first mount. And `build_retriever` warms both models at startup (one embed, one rerank) so a cache
+the process cannot write - or a cold cache with no network - fails at boot: `main.py` logs "RAG unavailable", the
+Research agent starts without `rag_search`, and `/health` says `rag: false`. Accepted tradeoff: startup now includes
+model loading (a few seconds warm, ~200 MB download cold), which is exactly what the k8s readiness probe's
+`initialDelaySeconds` was already assuming.

@@ -156,6 +156,13 @@ async def build_retriever(
         embedder, reranker = HashingEmbedder(), SimpleReranker()
     else:
         embedder, reranker = SentenceTransformerEmbedder(settings.embedding_model), CrossEncoderReranker(settings.reranker_model)
+    if kind != "offline":
+        # Warm up now, not on the first query. Both models load lazily; a cache directory the
+        # process cannot write, or no network on a cold cache, would otherwise surface as a tool
+        # error inside a chat while /health kept reporting rag=true. Failing here means main.py
+        # logs "RAG unavailable" and starts without rag_search - visible, not silent.
+        await embedder.embed(["warm-up"])
+        await reranker.score("warm-up", ["warm-up"])
     if kind == "postgres":
         if db is None:
             raise ValueError("kind='postgres' needs a Database")

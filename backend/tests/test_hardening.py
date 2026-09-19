@@ -148,3 +148,36 @@ async def test_chat_returns_the_answer_even_if_persisting_the_turn_fails():
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as http:
             r = await http.post("/chat", json={"message": "hi"})
     assert r.status_code == 200 and r.json()["text"] == "the answer"
+
+
+
+# ---------------------------------------------------------------- RAG fails at boot, not in a chat
+async def test_build_retriever_warms_the_models_so_a_broken_cache_fails_at_startup(monkeypatch, tmp_path):
+    """Seen in compose: a root-owned cache volume meant the embedder could not load; /health said
+    rag=true and every rag_search failed inside chats. Warm-up moves that failure to startup."""
+    from app import bootstrap
+    from app.config import Settings
+    from app.rag import embedder as emb_mod
+    from app.rag import reranker as rr_mod
+
+    class BrokenEmbedder(emb_mod.HashingEmbedder):
+        async def embed(self, texts):
+            raise PermissionError("[Errno 13] Permission denied: '/home/app/.cache/huggingface'")
+
+    monkeypatch.setattr(emb_mod, "SentenceTransformerEmbedder", lambda *_a, **_k: BrokenEmbedder())
+    monkeypatch.setattr(rr_mod, "CrossEncoderReranker", lambda *_a, **_k: rr_mod.SimpleReranker())
+    with pytest.raises(PermissionError):
+        await bootstrap.build_retriever("memory", tmp_path, settings=Settings(_env_file=None))
+
+
+async def test_app_starts_without_rag_when_the_models_cannot_load(monkeypatch, tmp_path):
+    from app import main as main_mod
+    from app.config import Settings
+
+    async def broken(*_a, **_k):
+        raise PermissionError("cache not writable")
+
+    monkeypatch.setattr(main_mod, "build_retriever", broken)
+    state = await main_mod.create_state(Settings(model_provider="mock", _env_file=None), use_db=False)
+    assert state.retriever is None  # degraded honestly: /health reports rag=false, no rag_search tool
+    assert not any(t.name == "rag_search" for a in state.system.agents for t in state.system.registry.tools_for(a.name))

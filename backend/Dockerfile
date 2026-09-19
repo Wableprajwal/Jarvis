@@ -3,7 +3,12 @@ FROM python:3.12-slim
 # git: the git_diff_summarize tool shells out to it.
 RUN apt-get update && apt-get install -y --no-install-recommends git \
  && rm -rf /var/lib/apt/lists/* \
- && useradd --uid 10001 --create-home app
+ && useradd --uid 10001 --create-home app \
+ # The model cache is a named volume in compose. Docker creates a volume's mount point as root
+ # unless the image already has the directory, in which case the volume inherits its ownership
+ # on first use. Without this line the non-root process cannot write the cache, the embedder
+ # never loads, and RAG silently fails at query time (caught by the eval: RAG-grounding 83% -> 17%).
+ && mkdir -p /home/app/.cache && chown -R app:app /home/app
 
 WORKDIR /srv
 COPY requirements.txt .
