@@ -258,3 +258,50 @@ agent and judge (Section 11: "may point at a stronger model... matters more with
 scorecard: routing 21/21 (100%), tool-selection 5/5 (100%), memory-recall 4/4 (100%), RAG-grounding 5/6 (83%),
 refusal/edge-case 4/6 (67%) - left as-is rather than tuned further, and documented here per the "honesty on scope" guidance
 rather than reported as a clean 100%.
+
+## Audit pass — findings from reviewing the finished system
+
+### Agent handoffs run in order; independent tool calls still run concurrently
+Found by reading a real trace: asked to "look up the retry policy, **then** write tests from it", qwen2.5:7b emitted
+*both* `route_to_research` and `route_to_code` in a single model turn. The loop gathered every tool call in a turn with
+`asyncio.gather`, so the two agents ran concurrently - and the Code agent received a task saying "based on the policy the
+research agent found" while the Research agent was still running. It had no findings, so it asked the user for a file
+path instead of doing the work.
+
+Chose to mark agent-handoff tools `serial = True` and run a batch containing any serial call in the order the model
+emitted it, over (a) leaving everything concurrent and relying on the prompt to make the model sequence its calls across
+turns - a 7B model demonstrably does not - or (b) serializing every tool call, which would needlessly drop the parallel
+dispatch the spec asks for. Ordinary tools keep `asyncio.gather`; only a batch containing a handoff is ordered, and a
+test pins both halves of that. Each `route_to_*` call now also receives the answers of agents already completed **in the
+same turn** as context, so a chain works whether the model batches its calls or spreads them across turns.
+Accepted tradeoff: two genuinely independent sub-agents batched together now run one after the other. With a local
+model, wall-clock is dominated by token generation and correctness of chained work matters more than overlapping two
+delegations; making that opt-in per call would put the dependency judgement back on the weak model that got it wrong.
+Re-verified live: the same request now produces tests containing the policy's real values (5 attempts, 10 s cap).
+
+### One route decision paired with one result
+`OrchestratorResult` exposed `route_decisions` and `agent_results` as two flat lists that the eval harness zipped
+together. `agent_results` omits agents that raised, so a single failing delegation shifted the pairing and handed the
+judge a transcript attributing one agent's messages to another. Chose to pair them at the source (`RoutedStep`, built
+from the per-turn ledger that already recorded call order) over defensive length checks at each use site.
+
+### Tests get their own database
+The suite wrote into the same database as the dev server, so a `make test` run left ~350 MockProvider trace rows behind
+and the `/metrics` dashboard reported a p50 model latency of 0.01 ms. Chose a separate `<name>_test` database (auto-created,
+`TEST_DATABASE_URL` overrides) over cleaning up rows per test, because isolation cannot be forgotten by the next test
+author. Accepted tradeoff: one extra database, and a role that cannot `CREATE DATABASE` needs `make setup-db` once.
+
+### Session reads enforce ownership the same way writes do
+`POST /chat` refused a session belonging to another user while `GET /sessions/{id}/messages` and the trace reads did not,
+which made the read path a way around the check. They now take the same `user_id` and return 403 on a mismatch.
+`user_id` is documented for what it is - a **namespacing key, not authentication**: this build has no authN, so a caller
+can still claim any id. The point is that the API is consistent and the gap is stated rather than implied to be security.
+
+### Verifying the frontend against the real backend, not just its mock
+The UI had only ever been exercised against its own fixture server, so nothing proved the real payload shapes matched.
+Captured real responses from the running stack (a RAG turn with citations, a sandboxed `code_exec` turn, a gated
+`email_send`, metrics, scorecards) into a committed fixture, and run the frontend's own parsing code over them. This
+confirmed the parts most likely to drift - `call_id` present on both sides of every tool pair so the timeline join never
+falls back to FIFO, `seq` ordering, the bare-list citation shape, `pending_confirmation` - and now fails if the backend
+changes them. A browser was not available in this environment, so interactive behaviour (clicks, approval flow) remains
+verified only by the frontend's own component-level tests, not by driving a real browser.

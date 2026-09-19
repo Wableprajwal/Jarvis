@@ -94,9 +94,20 @@ async def run_agent_loop(
             continue
 
         if resp.tool_calls:
-            outcomes = await asyncio.gather(
-                *(_run_call(call, registry, tracer, session_id, agent_name, turn_id) for call in resp.tool_calls)
-            )
+            # Independent calls run concurrently. If any call in the batch is `serial` (an agent
+            # handoff), the whole batch runs in the order the model emitted it: a model that asks
+            # for "research, then code" in one turn means the second to build on the first, and
+            # running those concurrently hands the second agent a task about findings that do not
+            # exist yet. Ordering the batch costs concurrency only when a handoff is involved.
+            if any(registry.is_serial(call.name) for call in resp.tool_calls):
+                outcomes = [
+                    await _run_call(call, registry, tracer, session_id, agent_name, turn_id)
+                    for call in resp.tool_calls
+                ]
+            else:
+                outcomes = await asyncio.gather(
+                    *(_run_call(call, registry, tracer, session_id, agent_name, turn_id) for call in resp.tool_calls)
+                )
             for call, tool_result in zip(resp.tool_calls, outcomes, strict=True):
                 result.tool_calls.append(
                     ExecutedCall(call.name, call.arguments, tool_result.ok, tool_result.pending_confirmation, tool_result.error)

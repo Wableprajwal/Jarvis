@@ -1,5 +1,8 @@
+
 """Phase 1 acceptance: scripted MockProvider drives user request -> orchestrator routes to
 CodeAgent -> tool call executes -> final answer. No live model."""
+
+import asyncio
 import json
 
 import pytest
@@ -248,3 +251,79 @@ async def test_a_failing_sub_agent_does_not_mispair_later_agents_results(registr
     assert len(result.agent_results) == 1 and len(result.route_decisions) == 2
     # the failed delegation is reported to the model as a structured error, not a crash
     assert result.text == "done"
+
+
+async def test_agents_batched_in_one_turn_run_in_order_and_see_earlier_findings(registry):
+    """A model that asks for 'research, then code' in a single turn means the second to build on the
+    first. Running those concurrently handed the second agent a task about findings that did not
+    exist yet (seen live: the code agent was told 'based on the policy the research agent found'
+    while research was still running)."""
+    from app.agents.base import SubAgent
+
+    order: list[str] = []
+
+    class Recording(SubAgent):
+        tool_names: list[str] = []
+
+        async def run(self, task, context, tracer, session_id, turn_id=None):
+            order.append(f"{self.name}:start")
+            await asyncio.sleep(0.01)  # a concurrent run would interleave here
+            order.append(f"{self.name}:end")
+            self.seen_context = context
+            return await super().run(task, context, tracer, session_id, turn_id)
+
+    class First(Recording):
+        name, description, system_prompt = "first", "goes first", "s"
+
+    class Second(Recording):
+        name, description, system_prompt = "second", "goes second", "s"
+
+    first = First(MockProvider(script=[text_response("THE POLICY IS 5 ATTEMPTS")]), registry)
+    second = Second(MockProvider(script=[text_response("tests written")]), registry)
+    orch = Orchestrator(
+        MockProvider(script=[
+            multi_tool_call_response([
+                ("route_to_first", {"task": "find the policy"}),
+                ("route_to_second", {"task": "write tests from what first found"}),
+            ]),
+            text_response("done"),
+        ]),
+        [first, second], InMemoryTracer(),
+    )
+
+    result = await orch.handle("research then code", "s1")
+
+    assert order == ["first:start", "first:end", "second:start", "second:end"]  # not interleaved
+    assert result.routed_agents == ["first", "second"]
+    # the second agent was actually handed the first agent's answer
+    context_text = " ".join(m["content"] for m in second.seen_context)
+    assert "THE POLICY IS 5 ATTEMPTS" in context_text
+    assert "first" in context_text
+    assert first.seen_context == []  # nothing had run before it
+
+
+async def test_independent_tool_calls_still_run_concurrently(registry):
+    """Serial ordering is only for agent handoffs; ordinary tools keep their parallel dispatch."""
+    import time
+
+    class Slow(GetTimeTool):
+        name = "slow_a"
+
+        async def execute(self, arguments):
+            await asyncio.sleep(0.05)
+            return await super().execute(arguments)
+
+    class SlowB(Slow):
+        name = "slow_b"
+
+    registry.register(Slow())
+    registry.register(SlowB())
+    registry.grant("agent", ["slow_a", "slow_b"])
+    provider = MockProvider(
+        script=[multi_tool_call_response([("slow_a", {}), ("slow_b", {})]), text_response("ok")]
+    )
+    started = time.perf_counter()
+    await run_agent_loop(
+        provider, [], registry.tools_for("agent"), registry, InMemoryTracer(), "s1", "agent"
+    )
+    assert time.perf_counter() - started < 0.09  # ~0.05 concurrently, ~0.10 if serialized

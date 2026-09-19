@@ -72,6 +72,10 @@ class Tool(ABC):
     description: str
     input_schema: dict
     requires_confirmation: bool = False
+    # Tools a model emits together normally run concurrently. `serial` marks a tool whose calls
+    # must run in the order the model wrote them because a later call can depend on an earlier
+    # one's result - agent handoffs (routing) are the case that matters here.
+    serial: bool = False
 
     @abstractmethod
     async def execute(self, arguments: dict) -> ToolResult: ...
@@ -201,6 +205,10 @@ class ToolRegistry:
         if tool_name not in self._grants.get(agent_name, set()):
             raise ToolNotPermitted(f"agent '{agent_name}' is not permitted to use tool '{tool_name}'")
         return self._tools[tool_name]
+
+    def is_serial(self, tool_name: str) -> bool:
+        tool = self._tools.get(tool_name)
+        return bool(tool is not None and tool.serial)
 
     def tools_for(self, agent_name: str) -> list[Tool]:
         return [self._tools[n] for n in sorted(self._grants.get(agent_name, set()))]
