@@ -61,7 +61,9 @@ every endpoint, including a multi-agent chained turn with RAG citations and a
 sandbox-blocked `code_exec` failure, a pending `email_send` confirmation that
 flips when approved, and five eval runs where run 4 regresses two categories.
 `POST /chat` and `POST /eval/run` mutate the in-memory state, so the UI's write
-paths are exercisable offline.
+paths are exercisable offline. As in the real backend, `POST /eval/run` answers `202`
+with a job and `GET /eval/jobs/{id}` reports `running` on the first poll and `done` (with
+the scorecard) after, so the dashboard's polling loop is exercised against the mock too.
 
 ## Design notes
 
