@@ -115,3 +115,20 @@ Chose pgvector (HNSW) as the primary store, a `float8[]` + numpy cosine fallback
 
 ### Confirmation gating for calendar_create / email_send
 Chose gating in the registry (tools declare `requires_confirmation=True`; nothing executes until `registry.confirm(id)`) over trusting the prompt to ask first, because irreversible actions need a human gate and a hallucinated or injected call must not act. Accepted tradeoff: an extra user step, and semantic errors JSON Schema cannot catch (bad dates, missing drafts) only surface after approval.
+
+## Phase 6 — Memory
+
+### Token-budget vs turn-count summarization
+Chose a token budget over a turn count because turn sizes vary wildly (a one-word reply vs. a 6KB tool dump) and the token budget is what the context window actually limits. Accepted tradeoff: the token counter is a heuristic (chars/4, injectable) and only approximate.
+
+### Summarize-and-replace vs truncate
+Chose folding older turns (and any prior summary) into ONE summary block over dropping old turns, because truncation silently loses decisions and facts. Accepted tradeoff: one extra model call, lossy compression; summarized rows are kept in the table (flagged) for audit.
+
+### Tool-call/result atomicity when trimming
+Chose cutting only at user-turn boundaries (never in front of a `tool` message) over cutting at an arbitrary token position, because an orphaned tool message makes providers reject the request. Accepted tradeoff: the kept window can be a little over/under target, and one oversized turn is left whole.
+
+### Long-term facts
+Chose an explicit `remember_fact` tool plus an extraction pass over a closed session, injected as a system message on every `build_history`, over storing facts inside the transcript. Credential-looking facts are refused. Accepted tradeoff: facts sit outside the token budget (capped by `max_facts`), and the extractor sees the summary + recent turns, not raw old turns.
+
+### One interface, two backends
+Chose a `MemoryStore` interface with a shared summarizing base, `PostgresMemoryStore` and `InMemoryMemoryStore`, both run through the same parametrized contract tests, so swapping storage never touches harness/agents and eval replay needs no database. Accepted tradeoff: storage primitives are async even for the in-memory store.
