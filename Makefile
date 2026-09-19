@@ -3,7 +3,7 @@ PY ?= backend/.venv/bin/python
 
 setup:
 	python3.12 -m venv backend/.venv
-	backend/.venv/bin/pip install -r backend/requirements.txt
+	backend/.venv/bin/pip install -r backend/requirements-dev.txt
 
 ## Create the separate database the test suite uses, so tests never write to the dev database.
 ## Only needed when pointing at a Postgres whose role cannot CREATE DATABASE (compose's can).

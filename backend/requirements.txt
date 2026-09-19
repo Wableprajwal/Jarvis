@@ -1,14 +1,15 @@
+# Runtime dependencies only - this is what the production image installs.
+# Test/lint tooling lives in requirements-dev.txt so it never ships.
 asyncpg==0.31.0
 fastapi==0.141.1
 httpx==0.28.1
 jsonschema==4.26.0
 pydantic==2.13.5
 pydantic-settings==2.15.0
-pytest==9.1.1
-pytest-asyncio==1.4.0
 PyYAML==6.0.3
 uvicorn==0.53.0
+# RAG: local embeddings + reranking, independent of the chat model. sentence-transformers pulls in
+# torch, which dominates image size; a CPU-only torch index slims it considerably.
 numpy==2.5.3
 rank-bm25==0.2.2
 sentence-transformers==6.1.0
-ruff==0.14.2
