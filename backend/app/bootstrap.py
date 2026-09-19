@@ -8,7 +8,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from app.agents.base import SubAgent
+from app.agents.base import COMMON_RULES, SubAgent
 from app.agents.code_agent import CodeAgent
 from app.agents.ops_agent import OpsAgent
 from app.agents.research_agent import ResearchAgent
@@ -52,6 +52,7 @@ class System:
             "provider": self.settings.model_provider,
             "models": {r: getattr(self.settings, f"{r}_model", None) for r in ROLES},
             "orchestrator_prompt": self.orchestrator.system_prompt(),
+            "agent_common_rules": COMMON_RULES,
             "agents": {
                 a.name: {
                     "description": a.description,

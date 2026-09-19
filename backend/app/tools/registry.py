@@ -10,7 +10,7 @@ import asyncio
 import json
 import uuid
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from jsonschema import Draft202012Validator
@@ -103,6 +103,28 @@ class PendingAction:
         }
 
 
+def sanitize_arguments(schema: dict, arguments: Any) -> Any:
+    """Drop top-level `null` values for OPTIONAL properties whose schema does not allow null.
+    Small local models routinely send `"limit": null` for parameters they have nothing to say
+    about; that means "not provided", and rejecting it wastes a whole model round-trip. Required
+    properties and properties that explicitly allow null are left untouched."""
+    if not isinstance(arguments, dict):
+        return arguments
+    required = set(schema.get("required", []))
+    props = schema.get("properties", {})
+
+    def allows_null(spec: dict) -> bool:
+        t = spec.get("type")
+        return t == "null" or (isinstance(t, list) and "null" in t) or any(
+            allows_null(sub) for sub in spec.get("anyOf", []) + spec.get("oneOf", [])
+        )
+
+    return {
+        k: v for k, v in arguments.items()
+        if not (v is None and k not in required and k in props and not allows_null(props[k]))
+    }
+
+
 def validate_arguments(schema: dict, arguments: Any) -> str | None:
     """Return a human/model-readable error, or None if valid."""
     if not isinstance(arguments, dict):
@@ -121,6 +143,7 @@ def validate_arguments(schema: dict, arguments: Any) -> str | None:
 async def safe_execute(tool: Tool, arguments: dict) -> ToolResult:
     """Validate then execute. Never raises: every failure becomes a structured error result
     that is fed back to the model."""
+    arguments = sanitize_arguments(tool.input_schema, arguments)
     problem = validate_arguments(tool.input_schema, arguments)
     if problem:
         return ToolResult.failure(f"invalid arguments for '{tool.name}': {problem}")
@@ -140,6 +163,22 @@ class ToolRegistry:
     _tools: dict[str, Tool] = field(default_factory=dict)
     _grants: dict[str, set[str]] = field(default_factory=dict)
     _pending: dict[str, PendingAction] = field(default_factory=dict)
+    # Optional output scrubber (anything with `.redact(obj) -> obj`, e.g. tools.credentials.Redactor).
+    # Applied to every ToolResult that leaves dispatch()/confirm(), so a secret a tool accidentally
+    # echoes never reaches the model or the trace. Fails closed: if scrubbing raises, the output is withheld.
+    redactor: Any = None
+
+    def _scrub(self, result: ToolResult) -> ToolResult:
+        if self.redactor is None:
+            return result
+        try:
+            return replace(
+                result,
+                output=self.redactor.redact(result.output),
+                error=None if result.error is None else self.redactor.redact(result.error),
+            )
+        except Exception:  # noqa: BLE001 - never let an unscrubbed result through
+            return ToolResult.failure("tool output withheld: it could not be safely redacted")
 
     def register(self, tool: Tool) -> None:
         if tool.name in self._tools:
@@ -167,13 +206,17 @@ class ToolRegistry:
         return [self._tools[n] for n in sorted(self._grants.get(agent_name, set()))]
 
     async def dispatch(self, agent_name: str, tool_name: str, arguments: dict, session_id: str) -> ToolResult:
-        """Allow-list check -> schema validation -> confirmation gate -> execute. Never raises."""
+        """Allow-list check -> schema validation -> confirmation gate -> execute -> redact. Never raises."""
+        return self._scrub(await self._dispatch(agent_name, tool_name, arguments, session_id))
+
+    async def _dispatch(self, agent_name: str, tool_name: str, arguments: dict, session_id: str) -> ToolResult:
         try:
             tool = self.get(agent_name, tool_name)
         except ToolError as exc:
             available = [t.name for t in self.tools_for(agent_name)]
             return ToolResult.failure(str(exc), available_tools=available)
 
+        arguments = sanitize_arguments(tool.input_schema, arguments)
         problem = validate_arguments(tool.input_schema, arguments)
         if problem:
             return ToolResult.failure(f"invalid arguments for '{tool.name}': {problem}")
@@ -203,5 +246,5 @@ class ToolRegistry:
             action.status = "rejected"
             return action
         action.status = "confirmed"
-        action.result = await safe_execute(action.tool, action.arguments)
+        action.result = self._scrub(await safe_execute(action.tool, action.arguments))
         return action

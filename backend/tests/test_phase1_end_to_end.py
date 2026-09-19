@@ -190,3 +190,25 @@ async def test_chained_routes_are_reported_in_call_order_not_agent_order(registr
     result = await orch.handle("chain", "s1")
     assert result.routed_agents == ["zzz_last_in_list", "aaa_first_in_list"]
     assert [r.text for r in result.agent_results] == ["Z", "A"]
+
+
+async def test_null_for_optional_argument_is_treated_as_not_provided(registry):
+    """Regression (seen live with qwen2.5:7b): `"limit": null` for an optional param was rejected."""
+    from app.tools.calendar import CalendarListTool, FakeCalendarBackend
+
+    registry.register(CalendarListTool(FakeCalendarBackend()))
+    registry.grant("agent", ["calendar_list", "read_file"])
+    ok = await registry.dispatch("agent", "calendar_list", {"start": "2026-09-21", "limit": None}, "s1")
+    assert ok.ok, ok.error
+    # required properties are never silently dropped
+    bad = await registry.dispatch("agent", "read_file", {"path": None}, "s1")
+    assert not bad.ok and "invalid arguments" in bad.error
+
+
+def test_sanitize_keeps_null_where_the_schema_allows_it():
+    from app.tools.registry import sanitize_arguments
+
+    schema = {"type": "object", "required": ["a"], "properties": {
+        "a": {"type": "string"}, "b": {"type": ["integer", "null"]}, "c": {"type": "integer"},
+        "d": {"anyOf": [{"type": "string"}, {"type": "null"}]}}}
+    assert sanitize_arguments(schema, {"a": "x", "b": None, "c": None, "d": None, "zzz": None}) == {"a": "x", "b": None, "d": None, "zzz": None}

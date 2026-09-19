@@ -229,8 +229,11 @@ def run_checks(s: TaskScenario, result: OrchestratorResult, system: System, init
     if s.forbidden_tool_calls:
         bad = [c for c in calls if c in s.forbidden_tool_calls]
         checks["forbidden_tool_calls"] = (not bad, f"forbidden calls made: {bad}" if bad else "none made")
+    if s.expected_any_of:
+        checks["expected_any_of"] = (any(n in calls for n in s.expected_any_of), f"wanted one of {s.expected_any_of}, got {calls}")
     for needle in s.must_include:
-        checks[f"includes:{needle}"] = (needle.lower() in text, f"answer={result.text!r}")
+        alternatives = [a.strip().lower() for a in needle.split("|")]
+        checks[f"includes:{needle}"] = (any(a in text for a in alternatives), f"answer={result.text!r}")
     for needle in s.must_not_include:
         checks[f"excludes:{needle}"] = (needle.lower() not in text, f"answer={result.text!r}")
     if s.grounding_source:
@@ -306,6 +309,7 @@ class EvalRunner:
 
     # -- layer 2
     async def run_task(self, s: TaskScenario) -> ScenarioResult:
+        s = s.for_mode(self.mode)
         provider_for = None
         if self.mode == "mock":
             if s.mock is None:

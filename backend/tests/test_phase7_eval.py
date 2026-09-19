@@ -166,3 +166,39 @@ async def test_postgres_run_store_roundtrip(db, retriever):
     assert (await store.latest("mock"))["run_id"] == card.run_id
     assert card.run_id in [r["run_id"] for r in await store.list(50)]
     await db.pool.execute("DELETE FROM eval_runs WHERE run_id = $1", card.run_id)
+
+
+# ---- scenario format features added after the first live run
+def test_live_overrides_apply_only_in_live_mode():
+    from app.eval.scenarios import TaskScenario
+
+    s = TaskScenario("x", "in", "c", expected_tool_calls=["email_send"], expect_pending_confirmation=True,
+                     live={"expected_tool_calls": [], "expected_any_of": ["email_send", "email_draft"], "expect_pending_confirmation": False})
+    assert s.for_mode("mock") is s
+    live = s.for_mode("live")
+    assert live.expected_tool_calls == [] and live.expected_any_of == ["email_send", "email_draft"] and not live.expect_pending_confirmation
+    assert s.expected_tool_calls == ["email_send"]  # original untouched
+
+
+async def test_alternate_phrasings_and_any_of_checks(retriever):
+    from app.eval.runner import run_checks
+    from app.eval.scenarios import TaskScenario
+    from app.bootstrap import build_system
+    from app.observability.trace import InMemoryTracer
+    from app.orchestrator.orchestrator import OrchestratorResult
+
+    system = build_system(SETTINGS, tracer=InMemoryTracer(), provider_for=lambda r: MockProvider())
+    res = OrchestratorResult(text="Sorry, I couldn't find that in the docs.", turn_id="t")
+    s = TaskScenario("x", "in", "c", must_include=["could not find|couldn't find"], expected_any_of=["email_send", "email_draft"])
+    checks = run_checks(s, res, system, initial_events=len(system.calendar.events))
+    assert checks["includes:could not find|couldn't find"][0] is True
+    assert checks["expected_any_of"][0] is False  # neither tool was called
+
+
+def test_every_live_override_targets_a_real_field():
+    from dataclasses import fields
+    from app.eval.scenarios import TaskScenario
+
+    names = {f.name for f in fields(TaskScenario)}
+    for s in load_task_scenarios():
+        assert set(s.live) <= names, s.id
