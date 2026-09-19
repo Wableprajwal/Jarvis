@@ -159,6 +159,11 @@ async def test_chat_validates_input():
     async def go(c, _):
         assert (await c.http.post("/chat", json={"message": ""})).status_code == 422
         assert (await c.http.post("/chat", json={})).status_code == 422
+        # identifiers are bounded and printable: they travel through URLs, logs and the trace UI
+        assert (await c.http.post("/chat", json={"message": "x", "session_id": "a" * 200})).status_code == 422
+        assert (await c.http.post("/chat", json={"message": "x", "user_id": "bad user\n"})).status_code == 422
+        assert (await c.http.post("/chat", json={"message": "x", "session_id": ""})).status_code == 422
+        # a human-typed name with a space is fine - it is a namespacing key, not a slug
 
     await run([], go)
 

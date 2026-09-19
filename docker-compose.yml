@@ -30,6 +30,9 @@ services:
       # workspace ships small, real Python files (utils/retry.py, config_loader.py, ...) so the
       # demo prompts work; point this at a repository of your own to ask about real code.
       - ./backend/app/eval/fixtures/workspace:/workspace:ro
+      # Embedding + reranker weights (~200 MB) are fetched from Hugging Face on first start. Keep them
+      # across container recreations so a restart is seconds, not a download, and works offline after.
+      - hf-cache:/home/app/.cache
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
@@ -47,3 +50,4 @@ services:
 
 volumes:
   pgdata:
+  hf-cache:

@@ -43,3 +43,35 @@ async def test_orchestrator_to_code_agent_with_real_model(tmp_path, native):
     assert result.routed_agents[:1] == ["code"], tracer.events
     assert any(c.name == "read_file" and c.ok for r in result.agent_results for c in r.tool_calls)
     assert result.text and ("3" in result.text or "three" in result.text.lower() or "triple" in result.text.lower())
+
+
+async def test_memory_summarizer_folds_older_turns_with_the_real_model():
+    """Phase 6 live: the summarizer is a real model call; on overflow it must compress the older
+    turns into ONE block that keeps the concrete facts, and leave the newest turn verbatim."""
+    from app.harness.memory import InMemoryMemoryStore
+    from app.observability.trace import InMemoryTracer
+
+    model = get_settings().summarizer_model
+    host = _require_model(model)
+    tracer = InMemoryTracer()
+    mem = InMemoryMemoryStore(OllamaProvider(host, model), tracer)
+    sid = "live-mem"
+    await mem.ensure_session(sid, "me")
+    for role, content in [
+        ("user", "We decided the payments retry policy is 5 attempts with a 30 second deadline."),
+        ("assistant", "Noted: 5 attempts, 30 s overall deadline."),
+        ("user", "On-call hands over Mondays at 10:00 UTC."),
+        ("assistant", "Understood - Monday 10:00 UTC handover."),
+        ("user", "What did we decide about retries?"),
+    ]:
+        await mem.append(sid, {"role": role, "content": content})
+
+    # ~65 tokens of context by the chars/4 heuristic; a 20-token budget forces a real summarization
+    await mem.summarize_if_needed(sid, token_budget=20)
+
+    ctx = await mem.get_context(sid)
+    assert len(ctx) < 5, ctx
+    assert ctx[-1]["content"] == "What did we decide about retries?"  # newest turn verbatim
+    summary = ctx[0]["content"]
+    assert "5" in summary and "30" in summary, summary  # the numbers survived compression
+    assert len(tracer.of_type("memory_summarize")) == 1

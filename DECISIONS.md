@@ -375,3 +375,16 @@ handle, not the result.
 - Confirmed/rejected pending actions accumulated for the life of the process; resolved ones are now pruned (pending
   ones never are).
 - A failure to persist a turn (memory store down) no longer turns an answer that was already produced into a 500.
+
+### The last Definition-of-Done item that had only been verified with mocks
+Memory summarization (DoD #4) had 194 passing tests, all against `MockProvider`. Verified live against `qwen2.5:7b`:
+seven turns on a deliberately tiny budget fold to a single summary block plus the newest turn verbatim, and every concrete
+fact seeded (5 attempts, 30 s, Monday 10:00 UTC, 4 pods, restart 2) survives compression. Added as a permanent test in
+`tests/test_live_ollama.py`, which self-skips without Ollama so CI stays model-free. With this, every DoD item has a
+live verification, not just a mocked one.
+
+### Client identifiers are bounded and printable
+`session_id` and `user_id` are chosen by the client and travel through URLs, logs, trace rows and the UI. They are now
+1–128 printable characters (letters, digits, space, `. : @ + - _`), rejected with 422 otherwise. Spaces are allowed on
+purpose: the UI has a free-text "user id" field and a typed name like "Prajwal Wable" must not be a validation error -
+it is a namespacing key, not a slug or an identity claim.

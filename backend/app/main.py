@@ -105,8 +105,10 @@ def _require_owner(info, user_id: str | None) -> None:
 # ------------------------------------------------------------------------------- schemas
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=20_000)
-    session_id: str | None = None
-    user_id: str = "default"
+    # Client-chosen identifiers end up in URLs, logs, trace rows and the UI; keep them bounded and
+    # printable. They are namespacing keys, not secrets or auth (see _require_owner).
+    session_id: str | None = Field(default=None, min_length=1, max_length=128, pattern=r"^[\w .:@+-]+$")
+    user_id: str = Field(default="default", min_length=1, max_length=128, pattern=r"^[\w .:@+-]+$")
 
 
 class ConfirmRequest(BaseModel):

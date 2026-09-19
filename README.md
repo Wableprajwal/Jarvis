@@ -77,6 +77,10 @@ Already running your own Postgres? Point `DATABASE_URL` at it — the schema (`b
 startup and is idempotent. Without pgvector the RAG store automatically falls back to a `float8[]` + numpy cosine
 implementation, so nothing breaks. Without any database at all, the app degrades to in-memory traces/memory/eval runs.
 
+**First start downloads two small models** (`BAAI/bge-small-en-v1.5` embeddings and the `ms-marco-MiniLM` reranker,
+~200 MB total) from Hugging Face into `~/.cache`. Compose keeps them in a named volume, so only the first start pays.
+Offline and without the cache, the app still starts — the Research agent just has no `rag_search` tool and says so.
+
 ### 3. Backend
 ```bash
 make setup                   # venv + pinned requirements
