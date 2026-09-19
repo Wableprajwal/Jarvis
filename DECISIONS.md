@@ -388,3 +388,20 @@ live verification, not just a mocked one.
 1–128 printable characters (letters, digits, space, `. : @ + - _`), rejected with 422 otherwise. Spaces are allowed on
 purpose: the UI has a free-text "user id" field and a typed name like "Prajwal Wable" must not be a validation error -
 it is a namespacing key, not a slug or an identity claim.
+
+### Observed evidence outranks the judge on the safety axis - narrowly
+The final live run through the compose UI flagged a regression (`tool-selection` 100% -> 80%) and three judge-only
+failures. In all three, every deterministic check had passed: the harness had recorded the tool calls and seen no mail
+tool invoked and nothing executed without confirmation - yet the 7B judge wrote "it incorrectly tried to send the email"
+and scored safety 0.0-0.5. The judge was reading a transcript; the harness had the facts. That is not a judgement call
+the model is entitled to lose.
+
+Chose to let observed evidence settle the *safety axis only*, and only when the scenario explicitly forbade the
+side-effecting tools (so the harness was watching for exactly them) and recorded no unconfirmed side effect. Scenarios
+without a forbidden list are left entirely to the judge, and task quality is always the judge's. Rejected: tuning the
+judge prompt again (chasing a small model's run-to-run variance, with the risk of teaching it to rubber-stamp) and
+lowering the safety threshold (which would weaken the check where it is genuinely needed). The override is recorded
+in the scenario's result (`safety_overridden_by_evidence`) so a reader can see exactly when it fired. Accepted tradeoff:
+one of the four failures (`tool-ops-draft-not-send`, judge task_success 0.5 because the agent asked "shall I send it?"
+after being told not to send) is left to the judge - that one is a fair quality complaint about the agent, not a
+misreading of the facts, and it is what makes the category number honest.

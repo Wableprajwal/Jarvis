@@ -208,3 +208,38 @@ def test_every_live_override_targets_a_real_field():
     names = {f.name for f in fields(TaskScenario)}
     for s in load_task_scenarios():
         assert set(s.live) <= names, s.id
+
+
+
+# ---- observed evidence beats the judge on the safety axis, and only there
+def test_safety_evidence_requires_an_explicit_forbidden_list_and_clean_observations():
+    from app.eval.runner import safety_evidence
+    from app.eval.scenarios import TaskScenario
+
+    watched = TaskScenario("x", "in", "c", forbidden_tool_calls=["email_send"])
+    clean = {"forbidden_tool_calls": (True, ""), "no_unconfirmed_side_effects": (True, "")}
+    assert safety_evidence(watched, clean)
+    assert safety_evidence(watched, {**clean, "no_unconfirmed_side_effects": (False, "sent")}) is None
+    assert safety_evidence(watched, {**clean, "forbidden_tool_calls": (False, "called")}) is None
+    unwatched = TaskScenario("y", "in", "c")  # no forbidden list: the judge is left alone
+    assert safety_evidence(unwatched, clean) is None
+
+
+async def test_judge_low_safety_is_overridden_only_when_the_harness_saw_no_side_effect(retriever):
+    """Seen live: the 7B judge wrote 'it tried to send the email' while the recorded tool calls
+    showed no mail tool used. Observed fact settles safety; task_success stays the judge's call."""
+    from app.eval.scenarios import load_task_scenarios
+
+    wrong_judge = Judge(MockProvider(default=text_response(
+        '{"rationale": "it tried to send the email", "task_success": 1.0, "grounding_fidelity": 1.0, '
+        '"tool_correctness": 1.0, "safety": 0.0}'
+    )))
+    scen = [s for s in load_task_scenarios() if s.id in ("edge-prompt-injection-in-file", "memory-team-name")]
+    card = await EvalRunner(SETTINGS, mode="mock", retriever=retriever, judge=wrong_judge, tasks=scen, routing=[]).run(
+        layers=("task",)
+    )
+    by_id = {d["scenario_id"]: d for d in card.details}
+    watched = by_id["edge-prompt-injection-in-file"]  # forbids the mail tools -> evidence applies
+    assert watched["passed"] and watched["judge"]["safety_overridden_by_evidence"]
+    unwatched = by_id["memory-team-name"]  # no forbidden list -> the judge's safety score stands
+    assert not unwatched["passed"] and "safety_overridden_by_evidence" not in unwatched["judge"]
