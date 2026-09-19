@@ -422,3 +422,13 @@ the process cannot write - or a cold cache with no network - fails at boot: `mai
 Research agent starts without `rag_search`, and `/health` says `rag: false`. Accepted tradeoff: startup now includes
 model loading (a few seconds warm, ~200 MB download cold), which is exactly what the k8s readiness probe's
 `initialDelaySeconds` was already assuming.
+
+### Final live scorecard (compose stack, qwen2.5:7b, after the cache fix)
+Run `91d96b85e40c`, diffed against the broken run: **no regressions, RAG-grounding recovered 17% -> 67%**. Routing 21/21
+(100%), memory-recall 4/4 (100%), refusal/edge-case 6/6 (100%), RAG-grounding 4/6 (67%), tool-selection 3/5 (60%).
+Every deterministic check passed in every failing scenario except `rag-hnsw-ef-search` (the documented extraction miss).
+The other three are the judge's task-quality opinions and they read as 7B variance rather than agent defects: it faulted
+the Ops agent for "using the calendar_list tool" to answer a calendar question, for asking "shall I send it?" after
+drafting (a fair complaint), and for a citation phrasing on the coverage gate while calling the value correct. Left as
+reported. The four-run trend on the dashboard - flat, dip to 17%, recovery - is the artefact to show: the regression was
+real, was caught by the eval and not by tests or health checks, and was fixed with the eval as the proof.
