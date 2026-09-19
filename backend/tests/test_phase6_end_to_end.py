@@ -10,8 +10,8 @@ from app.harness.session import FACTS_HEADER, SessionManager
 from app.observability.trace import InMemoryTracer, NullTracer
 from app.orchestrator.orchestrator import Orchestrator
 from app.providers.mock_provider import MockProvider, text_response, tool_call_response
-from app.tools.memory_tool import RememberFactTool
 from app.tools.files import ReadFileTool
+from app.tools.memory_tool import RememberFactTool
 from app.tools.registry import ToolRegistry
 from tests.test_phase6_env import env, text_of  # noqa: F401  (env is a fixture)
 

@@ -40,11 +40,11 @@ class ToolResult:
     confirmation_id: str | None = None
 
     @staticmethod
-    def success(output: Any) -> "ToolResult":
+    def success(output: Any) -> ToolResult:
         return ToolResult(ok=True, output=output)
 
     @staticmethod
-    def failure(error: str, **extra: Any) -> "ToolResult":
+    def failure(error: str, **extra: Any) -> ToolResult:
         return ToolResult(ok=False, output=extra or None, error=error)
 
     def to_content(self) -> str:
@@ -151,7 +151,7 @@ async def safe_execute(tool: Tool, arguments: dict) -> ToolResult:
         result = await tool.execute(arguments)
     except asyncio.CancelledError:
         raise
-    except Exception as exc:  # noqa: BLE001 - deliberate catch-all at the tool boundary
+    except Exception as exc:  # noqa: BLE001 - deliberate catch-all at the TOOL boundary: every failure becomes a structured result
         return ToolResult.failure(f"tool '{tool.name}' raised {type(exc).__name__}: {exc}")
     if not isinstance(result, ToolResult):
         return ToolResult.failure(f"tool '{tool.name}' returned {type(result).__name__}, expected ToolResult")
@@ -177,7 +177,7 @@ class ToolRegistry:
                 output=self.redactor.redact(result.output),
                 error=None if result.error is None else self.redactor.redact(result.error),
             )
-        except Exception:  # noqa: BLE001 - never let an unscrubbed result through
+        except Exception:  # noqa: BLE001 - never let an unscrubbed result through, whatever the redactor did
             return ToolResult.failure("tool output withheld: it could not be safely redacted")
 
     def register(self, tool: Tool) -> None:

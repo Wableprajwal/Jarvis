@@ -73,6 +73,15 @@ class System:
         return hashlib.sha256(blob.encode()).hexdigest()[:16]
 
 
+def code_exec_tools(settings: Settings) -> list[Tool]:
+    """The sandboxed executor, built here so every caller (the app AND the eval harness) evaluates
+    the same tool set - the tool's schema feeds `config_hash`, so a divergence would silently make
+    eval runs describe a different configuration than the one actually served."""
+    from app.tools.code_exec import CodeExecTool
+
+    return [CodeExecTool(settings.workspace_root)]
+
+
 def default_provider_for(settings: Settings) -> ProviderFor:
     def provider_for(role: str) -> ModelProvider:
         return get_provider(settings.model_provider, model=getattr(settings, f"{role}_model"), settings=settings)

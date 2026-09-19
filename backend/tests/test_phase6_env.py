@@ -3,16 +3,15 @@
 `env` is parametrized over both MemoryStore implementations, so every test that uses it is a
 contract test that must pass identically for InMemory and Postgres. Postgres-backed params
 skip when no database is reachable; created rows are removed at teardown."""
-import os
 import uuid
 
 import pytest
 
-from app.config import get_settings
 from app.db import Database
 from app.harness.memory import InMemoryMemoryStore, MemoryStore, PostgresMemoryStore
 from app.observability.trace import Tracer
 from app.providers.base import ModelProvider
+from tests.conftest import database_url_for_tests
 
 
 class Env:
@@ -49,10 +48,10 @@ class Env:
 async def env(request):
     db = None
     if request.param == "postgres":
-        url = os.environ.get("TEST_DATABASE_URL") or get_settings().database_url
+        url = database_url_for_tests()
         try:
             db = await Database.connect(url)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 - no database reachable -> skip
             pytest.skip(f"postgres not available: {exc}")
     e = Env(request.param, db)
     yield e

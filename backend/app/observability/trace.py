@@ -8,7 +8,7 @@ import time
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 EVENT_TYPES = {
     "route_decision",
@@ -30,7 +30,7 @@ class TraceEvent:
     payload: dict = field(default_factory=dict)
     latency_ms: float | None = None
     tokens: int | None = None
-    ts: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    ts: datetime = field(default_factory=lambda: datetime.now(UTC))
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
     seq: int = 0  # monotonic per-process ordering; ts alone can collide
 

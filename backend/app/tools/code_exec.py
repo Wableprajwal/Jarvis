@@ -607,7 +607,7 @@ class SandboxBackend(ABC):
     enforcement: dict[str, str] = {}
 
     def __init__(self) -> None:
-        self._verified: str | None | bool = False  # False = not probed; None = ok; str = reason
+        self._verified: str | bool | None = False  # False = not probed; None = ok; str = reason
 
     @abstractmethod
     def check_available(self) -> str | None:
@@ -629,7 +629,7 @@ class SandboxBackend(ABC):
         if reason is None:
             try:
                 reason = await _self_test(self)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001 - backend probe: any failure means this sandbox is unusable here
                 reason = f"self-test crashed: {type(exc).__name__}: {exc}"
         self._verified = reason
         return reason

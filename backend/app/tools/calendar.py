@@ -15,7 +15,7 @@ import itertools
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from app.tools.registry import Tool, ToolResult
 
@@ -29,7 +29,7 @@ EMAIL_PATTERN = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
 def parse_iso(value: str) -> datetime:
     """ISO 8601 date or datetime -> aware datetime (naive values are taken as UTC)."""
     dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
 
 
 @dataclass

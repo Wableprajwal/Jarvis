@@ -1,4 +1,6 @@
 """Chunker: size, overlap, boundaries, metadata. Pure functions; no DB, no models."""
+from itertools import pairwise
+
 import pytest
 
 from app.rag.chunking import CHARS_PER_TOKEN, chunk_text
@@ -38,7 +40,7 @@ def test_chunks_respect_size_budget_and_are_numbered():
 def test_chunks_overlap_about_fifteen_percent_on_word_boundaries():
     size = 500 * CHARS_PER_TOKEN
     chunks = chunk_text(_doc(30))
-    for prev, cur in zip(chunks, chunks[1:]):
+    for prev, cur in pairwise(chunks):
         # the head of `cur` is a tail of `prev`
         shared = 0
         for n in range(min(len(prev.text), len(cur.text)), 0, -1):

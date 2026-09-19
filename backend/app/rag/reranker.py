@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 from abc import ABC, abstractmethod
+from itertools import pairwise
 
 from app.rag.textutil import tokenize
 
@@ -44,12 +45,12 @@ class SimpleReranker(Reranker):
     async def score(self, query: str, texts: list[str]) -> list[float]:
         q = tokenize(query)
         q_terms = set(q)
-        q_bigrams = set(zip(q, q[1:]))
+        q_bigrams = set(pairwise(q))
         scores: list[float] = []
         for text in texts:
             toks = tokenize(text)
             terms = set(toks)
-            bigrams = set(zip(toks, toks[1:]))
+            bigrams = set(pairwise(toks))
             term_cov = len(q_terms & terms) / len(q_terms) if q_terms else 0.0
             bi_cov = len(q_bigrams & bigrams) / len(q_bigrams) if q_bigrams else 0.0
             scores.append(term_cov + 0.5 * bi_cov)

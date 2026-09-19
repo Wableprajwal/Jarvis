@@ -121,7 +121,7 @@ class HybridRetriever:
         if not cands:
             return []
         scores = await self.reranker.score(query, [c.chunk.text for c in cands])
-        ranked = sorted(zip(cands, scores), key=lambda cs: (-cs[1], -cs[0].rrf_score, cs[0].chunk.id))
+        ranked = sorted(zip(cands, scores, strict=True), key=lambda cs: (-cs[1], -cs[0].rrf_score, cs[0].chunk.id))
         return [
             Citation(
                 source=c.chunk.source,

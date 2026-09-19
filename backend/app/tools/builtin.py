@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from app.tools.registry import Tool, ToolResult
 
@@ -11,4 +11,4 @@ class GetTimeTool(Tool):
     input_schema = {"type": "object", "properties": {}, "additionalProperties": False}
 
     async def execute(self, arguments: dict) -> ToolResult:
-        return ToolResult.success({"utc": datetime.now(timezone.utc).isoformat()})
+        return ToolResult.success({"utc": datetime.now(UTC).isoformat()})

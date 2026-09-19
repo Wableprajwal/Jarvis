@@ -18,7 +18,7 @@ def _require_model(model: str) -> str:
     host = get_settings().ollama_host
     try:
         tags = httpx.get(f"{host}/api/tags", timeout=2).json()
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 - ollama unreachable for any reason -> skip
         pytest.skip("ollama not reachable")
     names = {m["name"] for m in tags.get("models", [])}
     if model not in names:

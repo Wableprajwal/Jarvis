@@ -394,7 +394,7 @@ async def test_child_does_not_inherit_harness_file_descriptors(backend, tmp_path
     finally:
         os.close(fd)
     assert "HARNESS-FD-CONTENT" not in r.stdout
-    assert f"OPEN-FDS []" in r.stdout or backend.name == "docker", r.stdout
+    assert "OPEN-FDS []" in r.stdout or backend.name == "docker", r.stdout
 
 
 # ---------------------------------------------------------------------------------------------
@@ -786,4 +786,4 @@ def test_seatbelt_profile_is_deny_default_and_minimal(tmp_path):
 def test_minimal_env_has_no_inherited_variables(monkeypatch):
     monkeypatch.setenv("SECRET_TOKEN", "leak")
     env = ce._minimal_env("/x")
-    assert "SECRET_TOKEN" not in env and all("leak" != v for v in env.values())
+    assert "SECRET_TOKEN" not in env and all(v != "leak" for v in env.values())

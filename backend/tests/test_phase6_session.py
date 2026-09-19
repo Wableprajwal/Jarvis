@@ -129,7 +129,7 @@ async def test_record_turn_persists_user_and_assistant_only(env):
 
 async def test_record_turn_summarizes_once_over_budget(env):
     prov = MockProvider(default=text_response("SUMMARY-FROM-SESSION"))
-    sm, memory = manager(env, prov)
+    sm, _memory = manager(env, prov)
     uid = env.user()
     sid = await sm.create_session(uid, session_id=env.session())
     pad = "p" * 160

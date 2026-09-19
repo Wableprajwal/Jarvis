@@ -18,7 +18,6 @@ leak. `redact()` never mutates its input and never raises on odd objects.
 from __future__ import annotations
 
 import base64
-import binascii
 import dataclasses
 import html
 import json
@@ -53,7 +52,7 @@ class CredentialStore:
 
     # -- construction ------------------------------------------------------------------------
     @classmethod
-    def from_settings(cls, settings: Any = None) -> "CredentialStore":
+    def from_settings(cls, settings: Any = None) -> CredentialStore:
         """Every non-empty settings field whose name looks like a secret (gmail_token, ...)."""
         if settings is None:
             from app.config import get_settings
@@ -92,7 +91,7 @@ class CredentialStore:
     def names(self) -> list[str]:
         return sorted(self._secrets)
 
-    def redactor(self, **kwargs: Any) -> "Redactor":
+    def redactor(self, **kwargs: Any) -> Redactor:
         """A Redactor bound to this store: it always scrubs the store's *current* secret values."""
         return Redactor(source=self._values, **kwargs)
 
@@ -323,13 +322,13 @@ class Redactor:
                     if f.init
                 }
                 return dataclasses.replace(obj, **changes)
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001 - redaction must never raise on an odd object and leak by crashing
                 pass
         # Anything else (exceptions, datetimes, custom objects...) gets stringified somewhere
         # downstream (json default=str, f-strings): make sure the string form is clean.
         try:
             text = str(obj)
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001 - same: fail closed rather than propagate
             return REDACTED
         red = self.redact_text(text)
         return obj if red == text else red

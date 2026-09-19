@@ -230,15 +230,14 @@ class _PgStoreBase(VectorStore):
             f"INSERT INTO {self.table} (source, chunk_index, content_hash, embedder, text, metadata, embedding) "
             f"VALUES ($1,$2,$3,$4,$5,$6::jsonb,{self._embedding_placeholder(7)})"
         )
-        async with self.pool.acquire() as conn:
-            async with conn.transaction():
-                # serialize concurrent ingests of the same source
-                await conn.execute("SELECT pg_advisory_xact_lock(hashtext($1))", f"{self.table}:{source}")
-                await conn.execute(
-                    f"DELETE FROM {self.table} WHERE embedder=$1 AND source=$2", self.embedder_name, source
-                )
-                if rows:
-                    await conn.executemany(insert, rows)
+        async with self.pool.acquire() as conn, conn.transaction():
+            # serialize concurrent ingests of the same source
+            await conn.execute("SELECT pg_advisory_xact_lock(hashtext($1))", f"{self.table}:{source}")
+            await conn.execute(
+                f"DELETE FROM {self.table} WHERE embedder=$1 AND source=$2", self.embedder_name, source
+            )
+            if rows:
+                await conn.executemany(insert, rows)
         self._invalidate()
         return len(rows)
 
@@ -403,7 +402,7 @@ async def _try_enable_pgvector(conn) -> bool:
         return False
     try:
         await conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
-    except Exception as exc:  # noqa: BLE001 - e.g. insufficient privilege
+    except Exception as exc:  # noqa: BLE001 - probing for the pgvector extension; any failure means 'not available'
         logger.warning("could not enable pgvector (%s); falling back to array store", exc)
         return False
     return bool(await conn.fetchval("SELECT 1 FROM pg_extension WHERE extname = 'vector'"))

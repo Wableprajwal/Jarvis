@@ -212,7 +212,7 @@ def test_known_token_shapes_are_redacted_without_registration(name):
     text, needle = SHAPES[name]
     out = Redactor().redact_text(f"before {text} after")
     assert needle not in out, out
-    assert REDACTED in out and out.startswith("before") and out.endswith("after") or name == "pem"
+    assert (REDACTED in out and out.startswith("before") and out.endswith("after")) or name == "pem"
 
 
 def test_sensitive_dict_keys_are_masked_but_counters_are_not():

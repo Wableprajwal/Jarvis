@@ -97,7 +97,7 @@ async def run_agent_loop(
             outcomes = await asyncio.gather(
                 *(_run_call(call, registry, tracer, session_id, agent_name, turn_id) for call in resp.tool_calls)
             )
-            for call, tool_result in zip(resp.tool_calls, outcomes):
+            for call, tool_result in zip(resp.tool_calls, outcomes, strict=True):
                 result.tool_calls.append(
                     ExecutedCall(call.name, call.arguments, tool_result.ok, tool_result.pending_confirmation, tool_result.error)
                 )

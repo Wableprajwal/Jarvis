@@ -97,7 +97,7 @@ def test_confirmation_flags():
 
 
 async def test_calendar_list_reads_without_confirmation(ops):
-    reg, cal, _ = ops
+    reg, _cal, _ = ops
     res = await reg.dispatch("ops", "calendar_list", {"start": "2026-09-22", "end": "2026-09-24"}, "s")
     assert res.ok and not res.pending_confirmation
     assert [e["title"] for e in res.output["events"]] == ["1:1 with Priya", "Payments gateway incident review"]

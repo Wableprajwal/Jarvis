@@ -12,7 +12,7 @@ class Database:
         self.pool = pool
 
     @classmethod
-    async def connect(cls, url: str, init_schema: bool = True) -> "Database":
+    async def connect(cls, url: str, init_schema: bool = True) -> Database:
         pool = await asyncpg.create_pool(url, min_size=1, max_size=5)
         db = cls(pool)
         if init_schema:

@@ -27,9 +27,27 @@ Rules:
 
 
 @dataclass
+class RoutedStep:
+    """One delegation: the decision, and the agent's result once it came back.
+
+    `result` stays None when the sub-agent raised (a provider failure mid-turn), so pairing a
+    decision with a result must go through these steps - zipping the two flat lists silently
+    mispairs every delegation after a failed one.
+    """
+
+    decision: dict
+    result: AgentResult | None = None
+
+    @property
+    def agent(self) -> str:
+        return self.decision["agent"]
+
+
+@dataclass
 class OrchestratorResult:
     text: str | None
     turn_id: str
+    steps: list[RoutedStep] = field(default_factory=list)  # decisions paired with their results
     route_decisions: list[dict] = field(default_factory=list)
     agent_results: list[AgentResult] = field(default_factory=list)
     pending_confirmation_ids: list[str] = field(default_factory=list)
@@ -93,12 +111,13 @@ class Orchestrator:
             self.provider, messages, registry.tools_for(ROUTER_NAME), registry, self.tracer,
             session_id, ROUTER_NAME, self.max_iterations, turn_id=turn_id,
         )
-        decisions = [e["decision"] for e in ledger]  # call order, not agent-list order
-        agent_results = [e["result"] for e in ledger if e["result"] is not None]
+        steps = [RoutedStep(e["decision"], e["result"]) for e in ledger]  # call order, not agent-list order
+        agent_results = [s.result for s in steps if s.result is not None]
         return OrchestratorResult(
             text=loop_result.text,
             turn_id=turn_id,
-            route_decisions=decisions,
+            steps=steps,
+            route_decisions=[s.decision for s in steps],
             agent_results=agent_results,
             pending_confirmation_ids=[i for r in agent_results for i in r.pending_confirmation_ids],
             truncated=loop_result.truncated,

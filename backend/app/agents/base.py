@@ -8,7 +8,6 @@ from app.observability.trace import Tracer
 from app.providers.base import ModelProvider
 from app.tools.registry import ToolRegistry
 
-
 logger = logging.getLogger(__name__)
 
 # Appended to every agent's system prompt. These address failure modes seen with small local models.

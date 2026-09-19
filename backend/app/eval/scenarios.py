@@ -45,7 +45,7 @@ class TaskScenario:
     mock: list[dict] | None = None
     live: dict = field(default_factory=dict)  # field overrides applied only in live mode (see for_mode)
 
-    def for_mode(self, mode: str) -> "TaskScenario":
+    def for_mode(self, mode: str) -> TaskScenario:
         """Replay scripts pin exact tool sequences; a real model may legitimately take another safe
         path (e.g. draft instead of send). `live:` overrides let a scenario state the *behavioural*
         requirement for real models while the strict form still guards the harness in replay."""

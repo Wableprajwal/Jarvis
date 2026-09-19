@@ -1,6 +1,5 @@
 """HTTP contract tests (the same contract the React frontend codes against)."""
 import httpx
-import pytest
 
 from app.config import Settings
 from app.main import create_app
@@ -200,9 +199,40 @@ async def test_api_end_to_end_with_real_postgres(db):
         assert events and events[0]["event_type"] == "model_call"
         assert (await c.http.get("/sessions")).json()
 
-    import os
+    from tests.conftest import database_url_for_tests
 
-    from app.config import get_settings
+    await run(script, go, use_db=True,
+              settings=Settings(model_provider="mock", _env_file=None, database_url=database_url_for_tests()))
 
-    url = os.environ.get("TEST_DATABASE_URL") or get_settings().database_url
-    await run(script, go, use_db=True, settings=Settings(model_provider="mock", _env_file=None, database_url=url))
+
+async def test_sessions_can_be_scoped_to_one_user_and_carry_previews():
+    script = [text_response("a"), text_response("b")]
+
+    async def go(c, _):
+        await c.http.post("/chat", json={"message": "alice question", "session_id": "SA", "user_id": "alice"})
+        await c.http.post("/chat", json={"message": "bob question", "session_id": "SB", "user_id": "bob"})
+
+        everyone = (await c.http.get("/sessions")).json()
+        assert {s["id"] for s in everyone} >= {"SA", "SB"}
+        assert next(s for s in everyone if s["id"] == "SA")["preview"] == "alice question"
+
+        only_alice = (await c.http.get("/sessions", params={"user_id": "alice"})).json()
+        assert [s["id"] for s in only_alice] == ["SA"]
+
+    await run(script, go)
+
+
+async def test_session_reads_refuse_another_users_session_like_chat_does():
+    script = [text_response("a")]
+
+    async def go(c, _):
+        await c.http.post("/chat", json={"message": "secret plan", "session_id": "SP", "user_id": "alice"})
+        # no user_id: single-user dev/demo case still works
+        assert (await c.http.get("/sessions/SP/messages")).status_code == 200
+        # claiming a different user is refused, matching POST /chat's 403
+        assert (await c.http.get("/sessions/SP/messages", params={"user_id": "mallory"})).status_code == 403
+        assert (await c.http.get("/traces/session/SP", params={"user_id": "mallory"})).status_code == 403
+        assert (await c.http.get("/sessions/SP/messages", params={"user_id": "alice"})).status_code == 200
+        assert (await c.http.get("/sessions/nope/messages")).status_code == 404
+
+    await run(script, go)

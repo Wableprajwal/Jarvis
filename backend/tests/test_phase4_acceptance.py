@@ -195,7 +195,7 @@ async def test_code_agent_cannot_call_tools_outside_its_allow_list(workspace, to
     # and nothing happened anywhere
     assert world.mail.sent == [] and world.mail.drafts == {} and len(world.calendar.events) == 4
     assert world.registry.pending() == [] and result.pending_confirmation_ids == []
-    err = [e for e in world.tracer.of_type("tool_result") if e.agent_name == "code"][0]
+    err = next(e for e in world.tracer.of_type("tool_result") if e.agent_name == "code")
     assert err.payload["ok"] is False and "not permitted" in err.payload["error"]
 
 

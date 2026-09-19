@@ -29,14 +29,15 @@ import re
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from collections.abc import Callable
-from dataclasses import dataclass
-from datetime import datetime, timezone
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 
 from app.db import Database
 from app.observability.trace import NullTracer, Stopwatch, Tracer
 from app.providers.base import ModelProvider
 
 MEMORY_AGENT_NAME = "memory"
+PREVIEW_CHARS = 80  # session-list preview length
 VALID_ROLES = {"system", "user", "assistant", "tool"}
 
 SUMMARY_PREFIX = (
@@ -90,6 +91,9 @@ class SessionInfo:
     created_at: datetime | None = None
     closed_at: datetime | None = None
     summary: str | None = None
+    # First user message, filled in only by list_sessions() so the session list needs one query
+    # rather than one full transcript fetch per session.
+    preview: str | None = None
 
 
 def normalize_fact(fact: Fact) -> Fact:
@@ -170,8 +174,9 @@ class MemoryStore(ABC):
     async def get_all_messages(self, session_id: str) -> list[dict]:
         """The complete transcript, including messages already folded into the summary."""
 
-    async def list_sessions(self, limit: int = 50) -> list[SessionInfo]:
-        """Newest first. Optional: backends that cannot enumerate sessions return []."""
+    async def list_sessions(self, limit: int = 50, user_id: str | None = None) -> list[SessionInfo]:
+        """Newest first, optionally only one user's, each with a `preview`. Optional: backends
+        that cannot enumerate sessions return []."""
         return []
 
 
@@ -326,7 +331,7 @@ class _SummarizingMemoryStore(MemoryStore):
                     raise RuntimeError(resp.error or "summarizer returned no text")
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:  # noqa: BLE001 - never break the chat turn; keep every message
+            except Exception as exc:  # noqa: BLE001 - a summarizer failure must not lose the turn; the window just stays long
                 await self.tracer.log(
                     session_id, MEMORY_AGENT_NAME, "error",
                     {"stage": "memory_summarize", "error": f"{type(exc).__name__}: {exc}"},
@@ -373,7 +378,7 @@ class InMemoryMemoryStore(_SummarizingMemoryStore):
 
     async def ensure_session(self, session_id: str, user_id: str = "default") -> SessionInfo:
         if session_id not in self._sessions:
-            self._sessions[session_id] = SessionInfo(session_id, user_id, datetime.now(timezone.utc))
+            self._sessions[session_id] = SessionInfo(session_id, user_id, datetime.now(UTC))
         return copy.copy(self._sessions[session_id])
 
     async def get_session(self, session_id: str) -> SessionInfo | None:
@@ -382,7 +387,7 @@ class InMemoryMemoryStore(_SummarizingMemoryStore):
 
     async def close_session(self, session_id: str) -> None:
         if session_id in self._sessions and self._sessions[session_id].closed_at is None:
-            self._sessions[session_id].closed_at = datetime.now(timezone.utc)
+            self._sessions[session_id].closed_at = datetime.now(UTC)
 
     async def append(self, session_id: str, message: dict) -> None:
         validate_message(message)
@@ -394,8 +399,17 @@ class InMemoryMemoryStore(_SummarizingMemoryStore):
     async def get_all_messages(self, session_id: str) -> list[dict]:
         return copy.deepcopy([r.message for r in self._rows.get(session_id, [])])
 
-    async def list_sessions(self, limit: int = 50) -> list[SessionInfo]:
-        return sorted(self._sessions.values(), key=lambda s: s.created_at or datetime.min.replace(tzinfo=timezone.utc), reverse=True)[:limit]
+    async def list_sessions(self, limit: int = 50, user_id: str | None = None) -> list[SessionInfo]:
+        chosen = [s for s in self._sessions.values() if user_id is None or s.user_id == user_id]
+        chosen.sort(key=lambda s: s.created_at or datetime.min.replace(tzinfo=UTC), reverse=True)
+        out = []
+        for info in chosen[:limit]:
+            first = next(
+                (r.message.get("content") for r in self._rows.get(info.id, []) if r.message["role"] == "user"),
+                None,
+            )
+            out.append(replace(info, preview=(first or "")[:PREVIEW_CHARS]))
+        return out
 
     async def _load_active(self, session_id: str) -> tuple[str | None, list[_Row]]:
         session = self._sessions.get(session_id)
@@ -416,7 +430,7 @@ class InMemoryMemoryStore(_SummarizingMemoryStore):
 
     async def upsert_long_term_fact(self, user_id: str, fact: Fact) -> None:
         f = normalize_fact(fact)
-        f.updated_at = datetime.now(timezone.utc)
+        f.updated_at = datetime.now(UTC)
         self._facts[user_id][f.key] = f
 
 
@@ -470,9 +484,20 @@ class PostgresMemoryStore(_SummarizingMemoryStore):
         rows = await self.db.pool.fetch("SELECT message FROM messages WHERE session_id = $1 ORDER BY id", session_id)
         return [json.loads(r["message"]) for r in rows]
 
-    async def list_sessions(self, limit: int = 50) -> list[SessionInfo]:
-        rows = await self.db.pool.fetch("SELECT * FROM sessions ORDER BY created_at DESC LIMIT $1", limit)
-        return [self._session(r) for r in rows]
+    async def list_sessions(self, limit: int = 50, user_id: str | None = None) -> list[SessionInfo]:
+        rows = await self.db.pool.fetch(
+            """SELECT s.*, left(p.content, $3) AS preview
+                 FROM sessions s
+                 LEFT JOIN LATERAL (
+                     SELECT m.message->>'content' AS content FROM messages m
+                      WHERE m.session_id = s.id AND m.message->>'role' = 'user'
+                      ORDER BY m.id LIMIT 1
+                 ) p ON true
+                WHERE ($2::text IS NULL OR s.user_id = $2)
+                ORDER BY s.created_at DESC LIMIT $1""",
+            limit, user_id, PREVIEW_CHARS,
+        )
+        return [replace(self._session(r), preview=r["preview"] or "") for r in rows]
 
     async def _load_active(self, session_id: str) -> tuple[str | None, list[_Row]]:
         async with self.db.pool.acquire() as conn:

@@ -11,3 +11,4 @@ uvicorn==0.53.0
 numpy==2.5.3
 rank-bm25==0.2.2
 sentence-transformers==6.1.0
+ruff==0.14.2

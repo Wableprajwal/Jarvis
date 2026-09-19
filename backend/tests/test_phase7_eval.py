@@ -1,15 +1,20 @@
 """Phase 7 acceptance: scorecard, regression diff, and a CI gate that catches injected regressions.
 Everything runs offline against MockProvider / the simulated router."""
-from pathlib import Path
 
 import pytest
 
 from app.bootstrap import build_retriever
 from app.config import Settings
-from app.eval.ci import DOCS, break_research_prompt, format_scorecard, main, run_offline
+from app.eval.ci import DOCS, break_research_prompt, format_scorecard, main
 from app.eval.judge import Judge, JudgeScores, JudgeThresholds
 from app.eval.runner import (
-    EvalRunner, EvalThresholds, InMemoryEvalStore, PostgresEvalStore, diff_scorecards, score_by_category, ScenarioResult,
+    EvalRunner,
+    EvalThresholds,
+    InMemoryEvalStore,
+    PostgresEvalStore,
+    ScenarioResult,
+    diff_scorecards,
+    score_by_category,
 )
 from app.eval.scenarios import CATEGORIES, load_routing_scenarios, load_task_scenarios
 from app.eval.simulated import HeuristicJudgeProvider, SimulatedOrchestratorModel
@@ -181,9 +186,9 @@ def test_live_overrides_apply_only_in_live_mode():
 
 
 async def test_alternate_phrasings_and_any_of_checks(retriever):
+    from app.bootstrap import build_system
     from app.eval.runner import run_checks
     from app.eval.scenarios import TaskScenario
-    from app.bootstrap import build_system
     from app.observability.trace import InMemoryTracer
     from app.orchestrator.orchestrator import OrchestratorResult
 
@@ -197,6 +202,7 @@ async def test_alternate_phrasings_and_any_of_checks(retriever):
 
 def test_every_live_override_targets_a_real_field():
     from dataclasses import fields
+
     from app.eval.scenarios import TaskScenario
 
     names = {f.name for f in fields(TaskScenario)}

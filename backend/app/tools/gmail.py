@@ -11,7 +11,7 @@ import itertools
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from app.tools.registry import Tool, ToolResult
 
@@ -123,7 +123,7 @@ class FakeMailBackend(MailBackend):
 
 
 def _today() -> str:
-    return datetime.now(timezone.utc).date().isoformat()
+    return datetime.now(UTC).date().isoformat()
 
 
 class GmailBackend(MailBackend):

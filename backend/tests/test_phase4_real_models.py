@@ -29,13 +29,13 @@ def _models_reachable() -> str | None:
         for repo in (settings.embedding_model, settings.reranker_model):
             try:
                 snapshot_download(repo, local_files_only=True)
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001 - model download unavailable -> skip
                 cached = False
         if cached:
             return None
         socket.create_connection(("huggingface.co", 443), timeout=3).close()
         return None
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001 - model download unavailable -> skip
         return f"real models unavailable ({type(exc).__name__}: {exc})"
 
 
@@ -48,7 +48,7 @@ def real_models():
     try:
         embedder._load()
         reranker._predict("warmup", ["warmup"])
-    except Exception as exc:  # noqa: BLE001 - download failed midway, gated model, etc.
+    except Exception as exc:  # noqa: BLE001 - model download unavailable -> skip
         pytest.skip(f"could not load real models: {type(exc).__name__}: {exc}")
     return embedder, reranker
 

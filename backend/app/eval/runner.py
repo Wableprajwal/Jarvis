@@ -16,13 +16,13 @@ import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import yaml
 
 from app.agents.base import SubAgent
-from app.bootstrap import ROLES, System, build_system
+from app.bootstrap import System, build_system
 from app.config import Settings
 from app.eval.judge import Judge, JudgeThresholds, render_transcript
 from app.eval.mock_script import compile_script
@@ -107,7 +107,7 @@ class EvalThresholds:
     per_category: dict[str, float] = field(default_factory=dict)
 
     @classmethod
-    def load(cls, path: Path | None = None) -> "EvalThresholds":
+    def load(cls, path: Path | None = None) -> EvalThresholds:
         path = path or EVAL_DIR / "thresholds.yaml"
         data = yaml.safe_load(path.read_text()) if path.exists() else {}
         return cls(float((data or {}).get("default", 0.9)), {k: float(v) for k, v in ((data or {}).get("categories") or {}).items()})
@@ -298,7 +298,7 @@ class EvalRunner:
         try:
             res = await orch.handle(s.input, f"eval-route-{s.id}")
             actual = res.routed_agents
-        except Exception as exc:  # noqa: BLE001 - a crashing model is a failed scenario, not a crashed run
+        except Exception as exc:  # noqa: BLE001 - a crashing model is a FAILED SCENARIO, never a crashed eval run
             return ScenarioResult(s.id, s.category, "routing", False, str(s.expected_agent), None, error=f"{type(exc).__name__}: {exc}")
         passed = actual == s.expected_agent
         return ScenarioResult(
@@ -324,7 +324,7 @@ class EvalRunner:
         try:
             history = await system.sessions.build_history(session_id, EVAL_USER)
             res = await system.orchestrator.handle(s.input, session_id, history)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 - same: the pipeline raising is recorded as a scenario failure
             return ScenarioResult(s.id, s.category, "task", False, error=f"{type(exc).__name__}: {exc}", rationale="pipeline raised")
 
         checks = run_checks(s, res, system, initial_events)
@@ -335,7 +335,7 @@ class EvalRunner:
             transcript = render_transcript(
                 s.input, res.route_decisions,
                 [("orchestrator", res.loop.messages if res.loop else [])]
-                + [(d["agent"], r.messages) for d, r in zip(res.route_decisions, res.agent_results)],
+                + [(st.agent, st.result.messages) for st in res.steps if st.result is not None],
                 res.text,
             )
             scores = await self.judge.score(f"[{s.category}] {s.input}", s.rubric_notes, transcript)
@@ -360,7 +360,7 @@ class EvalRunner:
 
         reference = self._system(None if self.mode == "live" else (lambda role: MockProvider()))
         card = Scorecard(
-            run_id=uuid.uuid4().hex[:12], ts=datetime.now(timezone.utc).isoformat(), config_hash=reference.config_hash(),
+            run_id=uuid.uuid4().hex[:12], ts=datetime.now(UTC).isoformat(), config_hash=reference.config_hash(),
             mode=self.mode, scores_by_category=score_by_category(results), regressions=[], previous_run_id=None,
             details=[asdict(r) for r in results],
         )

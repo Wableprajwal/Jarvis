@@ -1,6 +1,5 @@
 """Hybrid retriever: BM25-only wins, dense-only wins, fusion/dedupe, top-5 cap, reranking.
 Vectors are hand-placed so each case isolates one retrieval leg. No DB, model or network."""
-import pytest
 
 from app.rag.embedder import Embedder
 from app.rag.reranker import Reranker, SimpleReranker

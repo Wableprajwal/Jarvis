@@ -18,7 +18,7 @@ import asyncio
 import hashlib
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from app.rag.chunking import DEFAULT_CHUNK_TOKENS, DEFAULT_OVERLAP_RATIO, chunk_text
@@ -89,7 +89,7 @@ async def ingest_path(
             continue
         text = raw.decode("utf-8", errors="replace")
         meta, body = parse_front_matter(text) if file.suffix.lower() != ".py" else ({}, text)
-        date = meta.get("date") or datetime.fromtimestamp(file.stat().st_mtime, timezone.utc).date().isoformat()
+        date = meta.get("date") or datetime.fromtimestamp(file.stat().st_mtime, UTC).date().isoformat()
         doc_type = meta.get("doc_type") or _DEFAULT_DOC_TYPE[file.suffix.lower()]
         pieces = chunk_text(
             body, source=source, date=date, doc_type=doc_type,
@@ -98,7 +98,8 @@ async def ingest_path(
         vectors: list[list[float]] = []
         for i in range(0, len(pieces), EMBED_BATCH):
             vectors.extend(await embedder.embed([c.text for c in pieces[i : i + EMBED_BATCH]]))
-        new = [NewChunk(c.text, c.index, c.metadata, v) for c, v in zip(pieces, vectors)]
+        # strict: an embedder returning the wrong number of vectors must fail loudly, not drop chunks
+        new = [NewChunk(c.text, c.index, c.metadata, v) for c, v in zip(pieces, vectors, strict=True)]
         report.chunks += await store.replace_document(source, content_hash, new)
         report.ingested.append(source)
     return report

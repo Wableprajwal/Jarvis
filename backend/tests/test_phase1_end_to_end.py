@@ -212,3 +212,39 @@ def test_sanitize_keeps_null_where_the_schema_allows_it():
         "a": {"type": "string"}, "b": {"type": ["integer", "null"]}, "c": {"type": "integer"},
         "d": {"anyOf": [{"type": "string"}, {"type": "null"}]}}}
     assert sanitize_arguments(schema, {"a": "x", "b": None, "c": None, "d": None, "zzz": None}) == {"a": "x", "b": None, "d": None, "zzz": None}
+
+
+async def test_a_failing_sub_agent_does_not_mispair_later_agents_results(registry):
+    """Regression: decisions and results were two flat lists zipped together, so once one agent
+    raised, every later delegation was paired with the wrong agent's transcript."""
+    from app.agents.base import SubAgent
+
+    class Boom(SubAgent):
+        name, description, system_prompt, tool_names = "boom", "always fails", "s", []
+
+        async def run(self, task, context, tracer, session_id, turn_id=None):
+            raise RuntimeError("provider died mid-turn")
+
+    class Fine(SubAgent):
+        name, description, system_prompt, tool_names = "fine", "always works", "s", []
+
+    agents = [Boom(MockProvider(), registry), Fine(MockProvider(script=[text_response("FINE")]), registry)]
+    orch = Orchestrator(
+        MockProvider(script=[
+            tool_call_response("route_to_boom", {"task": "t1"}),
+            tool_call_response("route_to_fine", {"task": "t2"}),
+            text_response("done"),
+        ]),
+        agents, InMemoryTracer(),
+    )
+
+    result = await orch.handle("two agents, first one dies", "s1")
+
+    assert result.routed_agents == ["boom", "fine"]
+    assert [s.agent for s in result.steps] == ["boom", "fine"]
+    assert result.steps[0].result is None          # boom raised
+    assert result.steps[1].result.text == "FINE"   # fine's result stays attached to fine
+    # the flat list still holds only real results, which is exactly why zipping it was unsafe
+    assert len(result.agent_results) == 1 and len(result.route_decisions) == 2
+    # the failed delegation is reported to the model as a structured error, not a crash
+    assert result.text == "done"

@@ -12,7 +12,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from app.bootstrap import ProviderFor, System, build_retriever, build_system, default_provider_for
+from app.bootstrap import ProviderFor, System, build_retriever, build_system, code_exec_tools, default_provider_for
 from app.config import Settings, get_settings
 from app.db import Database
 from app.eval.judge import Judge
@@ -22,7 +22,6 @@ from app.harness.memory import InMemoryMemoryStore, PostgresMemoryStore
 from app.observability.store import InMemoryTraceStore, PostgresTracer, TraceStore
 from app.observability.trace import Tracer
 from app.providers.ollama_provider import ProviderError
-from app.tools.code_exec import CodeExecTool
 from app.tools.credentials import CredentialStore, RedactingProvider, RedactingTracer
 from app.tools.memory_tool import current_user_var
 
@@ -59,7 +58,7 @@ async def create_state(settings: Settings, provider_for: ProviderFor | None = No
     if use_db:
         try:
             db = await Database.connect(settings.database_url)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 - Postgres optional: fall back to in-memory storage
             logger.warning("Postgres unavailable (%s); falling back to in-memory storage", exc)
 
     if db:
@@ -78,7 +77,7 @@ async def create_state(settings: Settings, provider_for: ProviderFor | None = No
     try:
         kind = "offline" if settings.model_provider == "mock" else ("postgres" if db else "memory")
         retriever = await build_retriever(kind, docs, db=db, settings=settings)
-    except Exception as exc:  # noqa: BLE001 - the app still works without RAG; the Research agent just lacks rag_search
+    except Exception as exc:  # noqa: BLE001 - RAG optional: the Research agent simply has no rag_search tool
         logger.warning("RAG unavailable (%s); Research agent will have no rag_search tool", exc)
 
     system = build_system(
@@ -89,8 +88,13 @@ async def create_state(settings: Settings, provider_for: ProviderFor | None = No
     return AppState(settings, system, tracer, traces, eval_store, retriever, provider_for, db, "postgres" if db else "memory")
 
 
-def code_exec_tools(settings: Settings) -> list:
-    return [CodeExecTool(settings.workspace_root)]
+def _require_owner(info, user_id: str | None) -> None:
+    """`user_id` is a namespacing key, not authentication - this app has no authN, so a caller can
+    claim any id. It is enforced anyway so the read endpoints agree with POST /chat (which refuses a
+    session owned by someone else) instead of quietly being the way around it. Omitting `user_id`
+    keeps the single-user dev/demo case ergonomic; see DECISIONS.md for what real auth would add."""
+    if user_id is not None and info.user_id != user_id:
+        raise HTTPException(403, f"session belongs to another user ({info.user_id})")
 
 
 # ------------------------------------------------------------------------------- schemas
@@ -146,7 +150,7 @@ def create_app(settings: Settings | None = None, *, provider_for: ProviderFor | 
             result = await s.system.orchestrator.handle(req.message, session_id, history)
         except ProviderError as exc:
             raise HTTPException(502, f"model backend error: {exc}") from exc
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.exception("chat failed")
             raise HTTPException(500, f"{type(exc).__name__}: {exc}") from exc
         await s.system.sessions.record_turn(session_id, req.message, result.text, user_id=req.user_id)
@@ -166,23 +170,24 @@ def create_app(settings: Settings | None = None, *, provider_for: ProviderFor | 
         return {"session_id": session_id, "facts_extracted": [{"key": f.key, "value": f.value} for f in facts]}
 
     @app.get("/sessions")
-    async def sessions(limit: int = Query(50, ge=1, le=200)):
+    async def sessions(limit: int = Query(50, ge=1, le=200), user_id: str | None = None):
         s = st()
-        out = []
-        for info in await s.system.memory.list_sessions(limit):
-            msgs = await s.system.memory.get_all_messages(info.id)
-            first = next((m["content"] for m in msgs if m["role"] == "user"), "")
-            out.append({
-                "id": info.id, "user_id": info.user_id,
-                "created_at": info.created_at.isoformat() if info.created_at else None, "preview": (first or "")[:80],
-            })
-        return out
+        return [
+            {
+                "id": i.id, "user_id": i.user_id,
+                "created_at": i.created_at.isoformat() if i.created_at else None,
+                "preview": i.preview or "",
+            }
+            for i in await s.system.memory.list_sessions(limit, user_id)
+        ]
 
     @app.get("/sessions/{session_id}/messages")
-    async def session_messages(session_id: str):
+    async def session_messages(session_id: str, user_id: str | None = None):
         s = st()
-        if await s.system.memory.get_session(session_id) is None:
+        info = await s.system.memory.get_session(session_id)
+        if info is None:
             raise HTTPException(404, "no such session")
+        _require_owner(info, user_id)
         return [
             {"role": m["role"], "content": m.get("content"), "created_at": None}
             for m in await s.system.memory.get_all_messages(session_id) if m["role"] in ("user", "assistant") and m.get("content")
@@ -201,8 +206,12 @@ def create_app(settings: Settings | None = None, *, provider_for: ProviderFor | 
         return {"turn_id": turn_id, "events": events}
 
     @app.get("/traces/session/{session_id}")
-    async def trace_session(session_id: str):
-        return {"session_id": session_id, "events": await st().traces.get_session(session_id)}
+    async def trace_session(session_id: str, user_id: str | None = None):
+        s = st()
+        info = await s.system.memory.get_session(session_id)
+        if info is not None:
+            _require_owner(info, user_id)
+        return {"session_id": session_id, "events": await s.traces.get_session(session_id)}
 
     @app.get("/metrics")
     async def metrics():

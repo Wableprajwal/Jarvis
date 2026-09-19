@@ -17,11 +17,8 @@ from collections import Counter
 from app.providers.base import ModelProvider, ModelResponse, ToolCall, Usage
 from app.providers.mock_provider import text_response
 
-_STOP = set(
-    "a an the and or but to of in on for with from by at as is are was were be been it its this that these those "
-    "me my our your i you we they he she do does did can could would should will please just about into over "
-    "what which who how why when where any some all not no then also after before so if than up out get make "
-    "use using via need want like".split()
+_STOP = frozenset(
+    ["a", "an", "the", "and", "or", "but", "to", "of", "in", "on", "for", "with", "from", "by", "at", "as", "is", "are", "was", "were", "be", "been", "it", "its", "this", "that", "these", "those", "me", "my", "our", "your", "i", "you", "we", "they", "he", "she", "do", "does", "did", "can", "could", "would", "should", "will", "please", "just", "about", "into", "over", "what", "which", "who", "how", "why", "when", "where", "any", "some", "all", "not", "no", "then", "also", "after", "before", "so", "if", "than", "up", "out", "get", "make", "use", "using", "via", "need", "want", "like"]
 )
 _SEQUENCE_CUES = ("then", "after that", "afterwards", "and then", "based on that", "using that", "using it", "use it to")
 

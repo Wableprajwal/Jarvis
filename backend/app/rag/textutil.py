@@ -6,9 +6,7 @@ import re
 _TOKEN_RE = re.compile(r"[a-z0-9]+(?:_[a-z0-9]+)*")
 
 STOPWORDS = frozenset(
-    "a an and are as at be but by can do does for from has have how i if in is it its of on or "
-    "our so that the their then there these this to us was we were what when where which who why "
-    "will with you your".split()
+    ["a", "an", "and", "are", "as", "at", "be", "but", "by", "can", "do", "does", "for", "from", "has", "have", "how", "i", "if", "in", "is", "it", "its", "of", "on", "or", "our", "so", "that", "the", "their", "then", "there", "these", "this", "to", "us", "was", "we", "were", "what", "when", "where", "which", "who", "why", "will", "with", "you", "your"]
 )
 
 
