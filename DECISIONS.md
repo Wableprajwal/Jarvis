@@ -7,10 +7,12 @@ Format: *Chose X over Y because Z; accepted tradeoff W.* One section per build p
 ### Routing is a tool call
 Chose to present each sub-agent to the orchestrator as a tool (`route_to_<agent>`, schema `{task, reason?}`) over a
 separate classifier / hard-coded router, because one mechanism (the tool-calling loop) then serves function calls *and*
-agent handoffs: one loop to test, uniform tracing, uniform iteration caps, and chaining/parallel dispatch fall out for
-free (a second `route_to_*` call after the first result is a chain; several calls in one model turn run concurrently
-via `asyncio.gather`). Accepted tradeoff: routing quality is only as good as the model's tool selection, and a weak
-local model can mis-route — which is exactly why routing has its own deterministic eval layer (Phase 7).
+agent handoffs: one loop to test, uniform tracing, uniform iteration caps, and chaining falls out for free (a second
+`route_to_*` call after the first result is a chain). Accepted tradeoff: routing quality is only as good as the model's
+tool selection, and a weak local model can mis-route — which is exactly why routing has its own deterministic eval layer
+(Phase 7). Note the concurrency rule was corrected later: ordinary tool calls in one model turn run together via
+`asyncio.gather`, but a batch containing an agent handoff runs in order (see "Agent handoffs run in order" below) —
+a model that batches "research, then code" means the second to build on the first.
 The optional `reason` field is what gets recorded in the `route_decision` trace event.
 
 ### Route tools are built per request, in a private registry
