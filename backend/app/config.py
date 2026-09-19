@@ -23,6 +23,7 @@ class Settings(BaseSettings):
 
     max_agent_iterations: int = 8
     workspace_root: str = "."  # root the Code agent may read from
+    docs_dir: str | None = None  # notes ingested for RAG at startup (default: <repo>/docs)
     memory_token_budget: int = 3000
 
     embedding_model: str = "BAAI/bge-small-en-v1.5"

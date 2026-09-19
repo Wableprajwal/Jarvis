@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 
 from app.db import Database
-from app.observability.trace import TraceEvent, Tracer
+from app.observability.trace import InMemoryTracer, TraceEvent, Tracer
 
 _COLUMNS = "seq, id, session_id, agent_name, turn_id, event_type, payload, latency_ms, tokens, ts"
 
@@ -92,4 +92,64 @@ class TraceStore:
                 for r in tools
             ],
             "tokens": {"sessions": tokens["sessions"], "avg_tokens_per_session": float(tokens["avg_tokens_per_session"])},
+        }
+
+
+def _pct(values: list[float], q: float) -> float:
+    if not values:
+        return 0.0
+    xs = sorted(values)
+    pos = (len(xs) - 1) * q
+    lo, hi = int(pos), min(int(pos) + 1, len(xs) - 1)
+    return xs[lo] + (xs[hi] - xs[lo]) * (pos - lo)
+
+
+class InMemoryTraceStore(InMemoryTracer):
+    """Tracer + the same read API as TraceStore, for running without Postgres."""
+
+    def _dicts(self, events) -> list[dict]:
+        return [e.to_dict() for e in sorted(events, key=lambda e: e.seq)]
+
+    async def get_turn(self, turn_id: str) -> list[dict]:
+        return self._dicts(e for e in self.events if e.turn_id == turn_id)
+
+    async def get_session(self, session_id: str, limit: int = 1000) -> list[dict]:
+        return self._dicts(e for e in self.events if e.session_id == session_id)[:limit]
+
+    async def list_turns(self, session_id: str | None = None, limit: int = 50) -> list[dict]:
+        turns: dict[str, list[TraceEvent]] = {}
+        for e in self.events:
+            if e.turn_id and (session_id is None or e.session_id == session_id):
+                turns.setdefault(e.turn_id, []).append(e)
+        out = [
+            {
+                "turn_id": t, "session_id": evs[0].session_id, "started": min(e.ts for e in evs).isoformat(),
+                "events": len(evs), "tokens": sum(e.tokens or 0 for e in evs),
+                "routed": [e.payload.get("agent") for e in sorted(evs, key=lambda e: e.seq) if e.event_type == "route_decision"],
+            }
+            for t, evs in turns.items()
+        ]
+        return sorted(out, key=lambda d: d["started"], reverse=True)[:limit]
+
+    async def metrics(self) -> dict:
+        by_agent: dict[str, list[float]] = {}
+        tools: dict[str, list[bool]] = {}
+        per_session: dict[str, int] = {}
+        for e in self.events:
+            if e.event_type == "model_call" and e.latency_ms is not None:
+                by_agent.setdefault(e.agent_name, []).append(e.latency_ms)
+            if e.event_type == "tool_result":
+                tools.setdefault(e.payload.get("tool", "?"), []).append(bool(e.payload.get("ok")))
+            per_session[e.session_id] = per_session.get(e.session_id, 0) + (e.tokens or 0)
+        return {
+            "latency_by_agent": [
+                {"agent": a, "calls": len(v), "p50_ms": _pct(v, 0.5), "p95_ms": _pct(v, 0.95)} for a, v in sorted(by_agent.items())
+            ],
+            "tool_success": [
+                {"tool": t, "calls": len(v), "ok": sum(v), "success_rate": sum(v) / len(v)} for t, v in sorted(tools.items())
+            ],
+            "tokens": {
+                "sessions": len(per_session),
+                "avg_tokens_per_session": (sum(per_session.values()) / len(per_session)) if per_session else 0.0,
+            },
         }

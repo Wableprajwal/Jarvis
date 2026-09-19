@@ -170,6 +170,10 @@ class MemoryStore(ABC):
     async def get_all_messages(self, session_id: str) -> list[dict]:
         """The complete transcript, including messages already folded into the summary."""
 
+    async def list_sessions(self, limit: int = 50) -> list[SessionInfo]:
+        """Newest first. Optional: backends that cannot enumerate sessions return []."""
+        return []
+
 
 # --- shared behaviour ---------------------------------------------------------------------
 
@@ -390,6 +394,9 @@ class InMemoryMemoryStore(_SummarizingMemoryStore):
     async def get_all_messages(self, session_id: str) -> list[dict]:
         return copy.deepcopy([r.message for r in self._rows.get(session_id, [])])
 
+    async def list_sessions(self, limit: int = 50) -> list[SessionInfo]:
+        return sorted(self._sessions.values(), key=lambda s: s.created_at or datetime.min.replace(tzinfo=timezone.utc), reverse=True)[:limit]
+
     async def _load_active(self, session_id: str) -> tuple[str | None, list[_Row]]:
         session = self._sessions.get(session_id)
         done = self._summarized[session_id]
@@ -462,6 +469,10 @@ class PostgresMemoryStore(_SummarizingMemoryStore):
     async def get_all_messages(self, session_id: str) -> list[dict]:
         rows = await self.db.pool.fetch("SELECT message FROM messages WHERE session_id = $1 ORDER BY id", session_id)
         return [json.loads(r["message"]) for r in rows]
+
+    async def list_sessions(self, limit: int = 50) -> list[SessionInfo]:
+        rows = await self.db.pool.fetch("SELECT * FROM sessions ORDER BY created_at DESC LIMIT $1", limit)
+        return [self._session(r) for r in rows]
 
     async def _load_active(self, session_id: str) -> tuple[str | None, list[_Row]]:
         async with self.db.pool.acquire() as conn:
