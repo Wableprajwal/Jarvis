@@ -1,0 +1,6 @@
+# Build artifacts specific to the frontend (node_modules/ and dist/ are
+# already ignored at the repo root).
+*.tsbuildinfo
+.env
+.env.local
+.vite/

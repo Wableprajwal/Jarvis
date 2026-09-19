@@ -1,0 +1,21 @@
+# DESIGN ARTIFACT (not applied to a live cluster).
+apiVersion: v1
+kind: Service
+metadata:
+  name: jarvis-backend
+  labels: {app: jarvis, component: backend}
+spec:
+  selector: {app: jarvis, component: backend}
+  ports:
+    - {name: http, port: 8000, targetPort: http}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jarvis-frontend
+  labels: {app: jarvis, component: frontend}
+spec:
+  type: ClusterIP            # expose through an Ingress with TLS + auth in a real deployment
+  selector: {app: jarvis, component: frontend}
+  ports:
+    - {name: http, port: 80, targetPort: http}

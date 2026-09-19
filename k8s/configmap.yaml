@@ -1,0 +1,22 @@
+# DESIGN ARTIFACT: how Jarvis would be configured on Kubernetes. Not applied to a live cluster in this project.
+# Non-secret settings only. Secrets (DB password, Gmail/Calendar tokens) live in a Secret, never here.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jarvis-config
+  labels: {app: jarvis}
+data:
+  MODEL_PROVIDER: "ollama"
+  # Model server is a separate workload/service (GPU node pool in a real deployment).
+  OLLAMA_HOST: "http://ollama.models.svc.cluster.local:11434"
+  ORCHESTRATOR_MODEL: "qwen2.5:7b"
+  CODE_MODEL: "qwen2.5:7b"
+  RESEARCH_MODEL: "qwen2.5:7b"
+  OPS_MODEL: "qwen2.5:7b"
+  JUDGE_MODEL: "qwen2.5:7b"        # point at a stronger model in production; grading must not share the agent's weights
+  SUMMARIZER_MODEL: "qwen2.5:7b"
+  TRACE_BACKEND: "postgres"
+  MAX_AGENT_ITERATIONS: "8"
+  MEMORY_TOKEN_BUDGET: "3000"
+  WORKSPACE_ROOT: "/workspace"      # read-only volume the Code agent may read from
+  DOCS_DIR: "/data/docs"            # notes ingested for RAG

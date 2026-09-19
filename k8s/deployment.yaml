@@ -1,0 +1,91 @@
+# DESIGN ARTIFACT (not applied to a live cluster). Backend + frontend Deployments.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jarvis-backend
+  labels: {app: jarvis, component: backend}
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app: jarvis, component: backend}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxUnavailable: 0, maxSurge: 1}
+  template:
+    metadata:
+      labels: {app: jarvis, component: backend}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: backend
+          image: jarvis-backend:0.1.0          # built from backend/Dockerfile
+          ports:
+            - {name: http, containerPort: 8000}
+          envFrom:
+            - configMapRef: {name: jarvis-config}
+          env:
+            # Credential isolation: secrets are injected into the process env and consumed only by
+            # tools/credentials.py; they never appear in prompts, traces or the ConfigMap.
+            - name: DATABASE_URL
+              valueFrom: {secretKeyRef: {name: jarvis-secrets, key: database-url}}
+            - name: GMAIL_TOKEN
+              valueFrom: {secretKeyRef: {name: jarvis-secrets, key: gmail-token, optional: true}}
+            - name: CALENDAR_TOKEN
+              valueFrom: {secretKeyRef: {name: jarvis-secrets, key: calendar-token, optional: true}}
+          readinessProbe:
+            httpGet: {path: /health, port: http}
+            initialDelaySeconds: 20          # embedding/reranker models load at startup
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /health, port: http}
+            initialDelaySeconds: 60
+            periodSeconds: 20
+          resources:
+            requests: {cpu: "500m", memory: 2Gi}
+            limits: {cpu: "2", memory: 4Gi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+            - {name: hf-cache, mountPath: /home/app/.cache}
+            - {name: workspace, mountPath: /workspace, readOnly: true}
+      volumes:
+        - {name: tmp, emptyDir: {}}
+        - {name: hf-cache, emptyDir: {}}
+        - {name: workspace, emptyDir: {}}     # replace with a read-only repo mount / git-sync sidecar
+      # NOTE: code_exec must NOT run inside this container's trust boundary in production. The
+      # subprocess sandbox used locally is replaced by a per-execution container/gVisor/Firecracker
+      # job (network-none, read-only mounts, CPU/memory/time limits) - see DECISIONS.md, Phase 5.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jarvis-frontend
+  labels: {app: jarvis, component: frontend}
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app: jarvis, component: frontend}
+  template:
+    metadata:
+      labels: {app: jarvis, component: frontend}
+    spec:
+      containers:
+        - name: frontend
+          image: jarvis-frontend:0.1.0         # built from frontend/Dockerfile (nginx serving dist/, proxying /api)
+          ports:
+            - {name: http, containerPort: 8080}
+          readinessProbe:
+            httpGet: {path: /, port: http}
+          resources:
+            requests: {cpu: "50m", memory: 64Mi}
+            limits: {cpu: "200m", memory: 128Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities: {drop: ["ALL"]}

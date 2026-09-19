@@ -22,6 +22,9 @@ services:
       DATABASE_URL: postgresql://jarvis:jarvis@postgres:5432/jarvis
       OLLAMA_HOST: http://host.docker.internal:11434   # Ollama runs on the host (GPU/Metal access)
       MODEL_PROVIDER: ollama
+      DOCS_DIR: /srv/docs
+    volumes:
+      - ./docs:/srv/docs:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
@@ -29,6 +32,13 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "8080:8080"
+    depends_on:
+      - backend
 
 volumes:
   pgdata:

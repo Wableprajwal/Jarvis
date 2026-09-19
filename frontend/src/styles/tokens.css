@@ -1,0 +1,157 @@
+/*
+ * Jarvis design tokens.
+ *
+ * Light is the base palette on bare :root. Dark redefines only the token values
+ * under prefers-color-scheme, so every component is written against roles and
+ * never against a raw colour.
+ *
+ * The five chart series colours are the validated categorical order (blue,
+ * orange, aqua, yellow, magenta) — assigned in fixed slot order, never cycled.
+ */
+
+:root {
+  color-scheme: light;
+
+  /* --- surfaces & ink ------------------------------------------------- */
+  --bg: #f6f7f8;
+  --bg-grid: #eceef1;
+  --surface: #ffffff;
+  --surface-2: #f2f3f5;
+  --surface-3: #e9ebee;
+  --surface-inset: #fafbfc;
+  --border: #e2e5e9;
+  --border-strong: #cdd2d9;
+  --border-focus: #2a78d6;
+
+  --text: #16181c;
+  --text-2: #52565e;
+  --text-3: #767c85;
+  --text-inverse: #ffffff;
+
+  /* --- accent & status ------------------------------------------------ */
+  --accent: #2a78d6;
+  --accent-hover: #256abf;
+  --accent-soft: #eaf2fd;
+  --accent-border: #b7d3f6;
+  --accent-ink: #184f95;
+
+  --good: #1d7f4f;
+  --good-soft: #e6f4ec;
+  --good-border: #b3ddc6;
+  --warning: #9a6400;
+  --warning-soft: #fdf3e0;
+  --warning-border: #ecd5a4;
+  --critical: #c8322f;
+  --critical-soft: #fdeceb;
+  --critical-border: #f2c2c0;
+  --critical-ink: #8f2320;
+
+  /* --- per-agent identity (used for lane rails and chips) ------------- */
+  --agent-orchestrator: #6b46c1;
+  --agent-research: #1baf7a;
+  --agent-code: #2a78d6;
+  --agent-ops: #eb6834;
+  --agent-default: #767c85;
+
+  /* --- chart series (validated categorical order) --------------------- */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --chart-grid: #e6e8eb;
+  --chart-axis: #c8ccd2;
+
+  /* --- type ------------------------------------------------------------ */
+  --font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas,
+    'Liberation Mono', monospace;
+
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 13px;
+  --fs-base: 14px;
+  --fs-lg: 16px;
+  --fs-xl: 20px;
+  --fs-2xl: 26px;
+
+  /* --- space, radius, elevation ---------------------------------------- */
+  --sp-1: 4px;
+  --sp-2: 6px;
+  --sp-3: 8px;
+  --sp-4: 12px;
+  --sp-5: 16px;
+  --sp-6: 20px;
+  --sp-7: 28px;
+  --sp-8: 40px;
+
+  --r-sm: 4px;
+  --r-md: 6px;
+  --r-lg: 10px;
+  --r-xl: 14px;
+  --r-pill: 999px;
+
+  --shadow-sm: 0 1px 2px rgb(16 18 22 / 0.05);
+  --shadow-md: 0 2px 6px rgb(16 18 22 / 0.07), 0 1px 2px rgb(16 18 22 / 0.04);
+  --shadow-lg: 0 12px 32px rgb(16 18 22 / 0.12), 0 2px 8px rgb(16 18 22 / 0.06);
+
+  --nav-h: 52px;
+  --maxw: 1400px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+
+    --bg: #0c0d10;
+    --bg-grid: #15171b;
+    --surface: #14161a;
+    --surface-2: #1b1e23;
+    --surface-3: #23262c;
+    --surface-inset: #101216;
+    --border: #262a30;
+    --border-strong: #363b43;
+    --border-focus: #3987e5;
+
+    --text: #f0f2f4;
+    --text-2: #a7adb6;
+    --text-3: #7c838d;
+    --text-inverse: #0c0d10;
+
+    --accent: #3987e5;
+    --accent-hover: #5598e7;
+    --accent-soft: #14243a;
+    --accent-border: #1f4675;
+    --accent-ink: #9ec5f4;
+
+    --good: #3ec287;
+    --good-soft: #10231b;
+    --good-border: #1e4835;
+    --warning: #e0a63c;
+    --warning-soft: #251c0d;
+    --warning-border: #4a3a18;
+    --critical: #f0706d;
+    --critical-soft: #2a1414;
+    --critical-border: #5a2725;
+    --critical-ink: #f5a3a1;
+
+    --agent-orchestrator: #a78bfa;
+    --agent-research: #34d399;
+    --agent-code: #60a5fa;
+    --agent-ops: #fb923c;
+    --agent-default: #8b929c;
+
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --series-4: #c98500;
+    --series-5: #d55181;
+    --chart-grid: #23262c;
+    --chart-axis: #3a3f47;
+
+    --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+    --shadow-md: 0 2px 6px rgb(0 0 0 / 0.45), 0 1px 2px rgb(0 0 0 / 0.3);
+    --shadow-lg: 0 12px 32px rgb(0 0 0 / 0.55), 0 2px 8px rgb(0 0 0 / 0.35);
+  }
+}
