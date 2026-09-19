@@ -6,6 +6,7 @@ import logging
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
@@ -41,6 +42,10 @@ class AppState:
     db: Database | None = None
     storage: str = "memory"
     eval_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    # Eval runs are background jobs: a live run takes ~15 minutes, far past what a browser or a
+    # reverse proxy will hold a single request open for (nginx defaulted to 504 after 60 s).
+    eval_jobs: dict[str, dict] = field(default_factory=dict)
+    eval_tasks: set[asyncio.Task] = field(default_factory=set)
 
 
 async def create_state(settings: Settings, provider_for: ProviderFor | None = None, use_db: bool | None = None) -> AppState:
@@ -153,7 +158,10 @@ def create_app(settings: Settings | None = None, *, provider_for: ProviderFor | 
         except Exception as exc:
             logger.exception("chat failed")
             raise HTTPException(500, f"{type(exc).__name__}: {exc}") from exc
-        await s.system.sessions.record_turn(session_id, req.message, result.text, user_id=req.user_id)
+        try:
+            await s.system.sessions.record_turn(session_id, req.message, result.text, user_id=req.user_id)
+        except Exception:
+            logger.exception("could not persist turn for session %s", session_id)
         return {
             "session_id": session_id,
             "turn_id": result.turn_id,
@@ -236,20 +244,60 @@ def create_app(settings: Settings | None = None, *, provider_for: ProviderFor | 
         return {"id": action.id, "status": action.status, "result": result}
 
     # ---- eval
-    @app.post("/eval/run")
-    async def eval_run():
+    MAX_EVAL_JOBS_KEPT = 20
+
+    async def _run_eval_job(job: dict) -> None:
+        """Runs with `eval_lock` already held by the endpoint that created the job; releases it."""
         s = st()
+        try:
+            try:
+                mock = s.settings.model_provider == "mock"
+                judge = Judge(HeuristicJudgeProvider() if mock else s.provider_for("judge"))
+                runner = EvalRunner(
+                    s.settings, mode="mock" if mock else "live", retriever=s.retriever, judge=judge, store=s.eval_store,
+                    extra_code_tools=(lambda: code_exec_tools(s.settings)),
+                )
+                card = await runner.run()
+            except Exception as exc:
+                logger.exception("eval job %s failed", job["job_id"])
+                job.update(status="failed", error=f"{type(exc).__name__}: {exc}")
+            else:
+                job.update(status="done", run_id=card.run_id, scorecard=card.to_dict())
+            finally:
+                job["finished_at"] = datetime.now(UTC).isoformat()
+        finally:
+            s.eval_lock.release()
+
+    @app.post("/eval/run", status_code=202)
+    async def eval_run():
+        """Start an eval run. Returns immediately with a job id; poll GET /eval/jobs/{job_id}."""
+        s = st()
+        # Take the lock HERE, not inside the task: a task only acquires it after it is scheduled,
+        # so two quick POSTs would both pass a `locked()` check and the second would queue instead
+        # of being refused. With no await between the check and the acquire, this is atomic.
         if s.eval_lock.locked():
             raise HTTPException(409, "an eval run is already in progress")
-        async with s.eval_lock:
-            mock = s.settings.model_provider == "mock"
-            judge = Judge(HeuristicJudgeProvider() if mock else s.provider_for("judge"))
-            runner = EvalRunner(
-                s.settings, mode="mock" if mock else "live", retriever=s.retriever, judge=judge, store=s.eval_store,
-                extra_code_tools=(lambda: code_exec_tools(s.settings)),
-            )
-            card = await runner.run()
-        return card.to_dict()
+        await s.eval_lock.acquire()
+        job = {
+            "job_id": uuid.uuid4().hex[:12], "status": "running",
+            "mode": "mock" if s.settings.model_provider == "mock" else "live",
+            "started_at": datetime.now(UTC).isoformat(), "finished_at": None, "run_id": None, "error": None,
+        }
+        s.eval_jobs[job["job_id"]] = job
+        for old_id in list(s.eval_jobs)[: max(0, len(s.eval_jobs) - MAX_EVAL_JOBS_KEPT)]:
+            if s.eval_jobs[old_id]["status"] != "running":
+                del s.eval_jobs[old_id]
+        task = asyncio.create_task(_run_eval_job(job))
+        s.eval_tasks.add(task)
+        task.add_done_callback(s.eval_tasks.discard)
+        return {k: v for k, v in job.items() if k != "scorecard"}
+
+    @app.get("/eval/jobs/{job_id}")
+    async def eval_job(job_id: str):
+        job = st().eval_jobs.get(job_id)
+        if job is None:
+            raise HTTPException(404, "no such eval job")
+        return job
 
     @app.get("/eval/runs")
     async def eval_runs(limit: int = Query(20, ge=1, le=100)):

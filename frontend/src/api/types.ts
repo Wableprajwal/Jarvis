@@ -205,6 +205,18 @@ export interface ScenarioDetail {
   rationale?: string;
 }
 
+/** POST /eval/run returns one of these; poll GET /eval/jobs/{job_id} until status leaves "running". */
+export interface EvalJob {
+  job_id: string;
+  status: 'running' | 'done' | 'failed' | (string & {});
+  mode: 'mock' | 'live' | (string & {});
+  started_at: string;
+  finished_at: string | null;
+  run_id: string | null;
+  error: string | null;
+  scorecard?: Scorecard;
+}
+
 export interface Scorecard {
   run_id: string;
   ts: string;

@@ -333,3 +333,45 @@ different platform. Added both; context dropped to ~528 KB.
 backend reaching Ollama on the host via `host.docker.internal`. Checked end to end through the exact path the UI uses
 (`:8080/api/chat`): a calendar question routed to the Ops agent and came back with the seeded events, and the turn is
 queryable at `/api/traces/turns`. The RAG question returns a cited answer from `adr-0007-retry-backoff.md`.
+
+## Second audit pass — interview readiness
+
+### Verified from a fresh clone
+`git clone` into an empty directory, `make setup`, `make check`: lint clean, 488 tests, offline eval gate passing. The
+README's setup path is the one that was actually exercised, not the one that happened to work on the machine it was
+written on.
+
+### Verified in a real browser, with real data
+Screenshots of every view against the running compose stack (Playwright driving the installed Chrome): trace timeline
+with real latencies and route reasons, dark mode, the empty eval state, and the 400 px layout. This found three things
+the component tests could not: the example prompts referenced files that do not exist in the shipped workspace (a demo
+click would fail), the second session was clipped under the user-id block at phone width, and the compose backend had
+`WORKSPACE_ROOT=/workspace` with nothing mounted there — the Code agent had no files to read in the container. All
+three fixed; the sample workspace is mounted read-only and the prompts are the ones in `DEMO.md`.
+
+### `read_file` now refuses the same sensitive names the sandbox does
+`code_exec` refused `.env`, `id_rsa*`, `*.pem`, `.git/`… when staging files; `read_file`, `generate_tests` and
+`git_diff_summarize --path` did not, and with the default `WORKSPACE_ROOT=.` the project's own `.env` was one tool call
+from the model. Chose one shared policy (`tools/paths.py`: inside-the-root check on the path *as written and as
+resolved* - so a symlink cannot launder a name - plus the sensitive-name list) over per-tool checks, so the rule cannot
+drift again. Redaction would have caught a Postgres URL by shape, but "the model never receives the file" is the layer
+that should hold; redaction is the backstop.
+
+### Eval runs are background jobs
+Clicking **Run eval** in the compose UI returned nginx's 504 page: a live run takes ~15 minutes and no proxy or browser
+holds one request open that long (the run did complete server-side; the client just never saw it). Chose a job model -
+`POST /eval/run` returns 202 with a job id and the dashboard polls `GET /eval/jobs/{id}` - over raising proxy timeouts,
+because a quarter-hour synchronous HTTP request is fragile everywhere, not just behind nginx. The endpoint takes the
+run lock itself before returning (a task acquires it only once scheduled, so two quick POSTs would both have passed a
+`locked()` check and the second would silently queue instead of being refused with 409). Accepted tradeoff: jobs live
+in process memory like pending confirmations; the scorecard itself is persisted, so a restart loses only the job
+handle, not the result.
+
+### Smaller fixes from reading with fresh eyes
+- A 200 from Ollama with the wrong body (`{"error": ...}`, empty `choices`, a non-JSON proxy page) escaped as a
+  `KeyError`/`IndexError` and surfaced as a 500; it is now a `ProviderError`, which the API maps to 502.
+- The loop's `<max iterations reached>` sentinel reached users verbatim; the orchestrator now returns what the agents
+  did produce plus an honest "step limit reached" note, and keeps `truncated=True` for the harness and the eval.
+- Confirmed/rejected pending actions accumulated for the life of the process; resolved ones are now pruned (pending
+  ones never are).
+- A failure to persist a turn (memory store down) no longer turns an answer that was already produced into a 500.

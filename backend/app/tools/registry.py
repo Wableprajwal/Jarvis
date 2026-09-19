@@ -232,11 +232,22 @@ class ToolRegistry:
         if tool.requires_confirmation:
             action = PendingAction(uuid.uuid4().hex[:12], session_id, agent_name, tool, dict(arguments))
             self._pending[action.id] = action
+            self._prune_resolved()
             return ToolResult(ok=True, pending_confirmation=True, confirmation_id=action.id)
 
         return await safe_execute(tool, arguments)
 
     # --- confirmation gate -------------------------------------------------------------
+    MAX_RESOLVED_KEPT = 200  # confirmed/rejected actions kept for a later status lookup
+
+    def _prune_resolved(self) -> None:
+        """Pending actions live in process memory; without this, every confirmed or rejected
+        action would stay for the life of the server. Oldest resolved ones go first; anything
+        still pending is never dropped."""
+        resolved = [k for k, a in self._pending.items() if a.status != "pending"]
+        for k in resolved[: max(0, len(resolved) - self.MAX_RESOLVED_KEPT)]:
+            del self._pending[k]
+
     def pending(self, session_id: str | None = None) -> list[PendingAction]:
         return [
             a

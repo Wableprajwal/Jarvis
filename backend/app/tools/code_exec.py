@@ -25,7 +25,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import ctypes
-import fnmatch
 import json
 import os
 import re
@@ -42,6 +41,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
+from app.tools.paths import resolve_inside
 from app.tools.registry import Tool, ToolResult
 
 IS_DARWIN = sys.platform == "darwin"
@@ -53,13 +53,6 @@ MAX_FILES = 20
 MAX_FILE_BYTES = 2 * MB
 MAX_TOTAL_FILE_BYTES = 10 * MB
 
-# Files a model may never expose to generated code, even if they are inside the workspace.
-_SENSITIVE_NAMES = (
-    ".env", ".env.*", "*.env", ".netrc", ".npmrc", ".pypirc", ".git-credentials", "id_rsa*", "id_dsa*",
-    "id_ecdsa*", "id_ed25519*", "*.pem", "*.key", "*.p12", "*.pfx", "*.jks", "*.kdbx", "credentials",
-    "credentials.*", "secrets", "secrets.*", "*.secret", "*.secrets", "token", "token.*", "*.token",
-)
-_SENSITIVE_DIRS = {".git", ".ssh", ".aws", ".gnupg", ".kube", ".docker", ".config", ".venv", "venv", "node_modules"}
 
 
 # ------------------------------------------------------------------------------------------
@@ -1103,13 +1096,6 @@ async def select_backend(
     return None, reasons
 
 
-def _is_sensitive(rel: PurePosixPath) -> bool:
-    parts = [p.lower() for p in rel.parts]
-    if any(p in _SENSITIVE_DIRS for p in parts[:-1]):
-        return True
-    return any(fnmatch.fnmatch(parts[-1], pat) for pat in _SENSITIVE_NAMES)
-
-
 def resolve_workspace_files(root: Path, paths: list[str]) -> dict[str, Path]:
     """Validate workspace-relative paths -> {rel: absolute resolved path}. Raises ValueError."""
     if len(paths) > MAX_FILES:
@@ -1118,18 +1104,8 @@ def resolve_workspace_files(root: Path, paths: list[str]) -> dict[str, Path]:
     out: dict[str, Path] = {}
     total = 0
     for raw in paths:
-        if not isinstance(raw, str) or not raw or "\x00" in raw or any(ord(c) < 32 for c in raw):
-            raise ValueError(f"invalid path: {raw!r}")
-        rel = PurePosixPath(raw)
-        if rel.is_absolute() or ".." in rel.parts or str(rel) in (".", ""):
-            raise ValueError(f"path must be relative to the workspace and stay inside it: {raw!r}")
-        target = (root / rel).resolve()
-        if not target.is_relative_to(root):
-            raise ValueError(f"path escapes the workspace root: {raw!r}")
-        if _is_sensitive(rel) or _is_sensitive(PurePosixPath(*target.relative_to(root).parts)):
-            raise ValueError(f"refusing to expose a sensitive file to generated code: {raw!r}")
-        if not target.is_file():
-            raise ValueError(f"not a file: {raw!r}")
+        rel = PurePosixPath(raw) if isinstance(raw, str) else PurePosixPath()
+        target = resolve_inside(root, raw)  # PathRefused is a ValueError: same contract as before
         size = target.stat().st_size
         if size > MAX_FILE_BYTES:
             raise ValueError(f"file too large (> {MAX_FILE_BYTES} bytes): {raw!r}")

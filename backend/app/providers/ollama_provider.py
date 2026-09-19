@@ -71,9 +71,17 @@ class OllamaProvider(ModelProvider):
             raise ProviderError(f"Ollama returned {exc.response.status_code}: {exc.response.text[:300]}") from exc
         except httpx.HTTPError as exc:
             raise ProviderError(f"Ollama request failed: {type(exc).__name__}: {exc}") from exc
+        except ValueError as exc:  # body was not JSON (a proxy error page, a truncated stream)
+            raise ProviderError(f"Ollama returned a non-JSON body: {r.text[:200]!r}") from exc
 
-        choice = data["choices"][0]
-        message = choice["message"]
+        # A 200 with the wrong shape (an {"error": ...} body, an empty choices list) must be a
+        # ProviderError the API maps to 502, not a KeyError that surfaces as a 500 crash.
+        try:
+            choice = data["choices"][0]
+            message = choice["message"]
+        except (KeyError, IndexError, TypeError) as exc:
+            detail = data.get("error") if isinstance(data, dict) else None
+            raise ProviderError(f"Ollama response had no choices: {detail or str(data)[:200]}") from exc
         u = data.get("usage") or {}
         usage = Usage(u.get("prompt_tokens", 0), u.get("completion_tokens", 0))
         finish = choice.get("finish_reason")

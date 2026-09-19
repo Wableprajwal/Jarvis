@@ -341,9 +341,11 @@ export function Chat({ onOpenTrace }: { onOpenTrace: (turnId: string) => void })
               >
                 <div style={{ marginTop: 'var(--sp-3)', display: 'grid', gap: 'var(--sp-2)', maxWidth: 520 }}>
                   {[
-                    'Why is checkout latency up since Tuesday? Check the repo and the runbook.',
-                    'Summarise the retry policy in our docs and email the on-call a digest.',
-                    'Generate pytest cases for billing/proration.py',
+                    // Each of these works against the shipped notes in docs/ and the sample workspace.
+                    'According to our notes, how many attempts does the retry policy allow, and what is the deadline?',
+                    'Look up our retry policy in the notes, then write pytest tests for utils/retry.py based on it.',
+                    'What is on my calendar between 2026-09-21 and 2026-09-24?',
+                    'Email dana@example.com that the release slipped to Monday.',
                   ].map((s) => (
                     <button
                       key={s}

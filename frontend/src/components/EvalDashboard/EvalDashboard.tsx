@@ -17,6 +17,8 @@ import { formatDateTime, formatPercent } from '../../lib/format';
 import { EmptyState, ErrorBanner, Spinner } from '../shared/ui';
 import { seriesColor, TrendChart } from './TrendChart';
 
+const POLL_MS = 2500;
+
 function deltaLabel(delta: number | null): string {
   if (delta === null) return '';
   const pts = delta * 100;
@@ -72,7 +74,18 @@ export function EvalDashboard({
     setRunning(true);
     setRunError(null);
     try {
-      const card = await api.runEval();
+      // The run is a background job on the server (a live run takes many minutes - far longer
+      // than a browser or proxy keeps one request open), so start it and poll for the result.
+      const started = await api.runEval();
+      let job = started;
+      while (job.status === 'running') {
+        await new Promise((r) => setTimeout(r, POLL_MS));
+        job = await api.evalJob(started.job_id);
+      }
+      if (job.status !== 'done' || !job.scorecard) {
+        throw new Error(job.error ?? `eval job ended with status "${job.status}"`);
+      }
+      const card = job.scorecard;
       setRuns((prev) => sortRunsNewestFirst([card, ...prev.filter((r) => r.run_id !== card.run_id)]));
       onSelectRun(card.run_id);
     } catch (err) {
@@ -136,7 +149,8 @@ export function EvalDashboard({
                 <Spinner /> Evaluating every scenario against the current config
               </div>
               <div className="banner__detail">
-                This runs the full routing and task suites and can take a minute.
+                Offline (mock) runs take seconds; a live run against the local model takes ~15 minutes. The
+                page keeps polling, so it is safe to leave this tab open.
               </div>
             </div>
           </div>

@@ -10,7 +10,7 @@
  *   PORT=8100 node mock-server.mjs
  *
  * State is in-memory: confirmations flip when approved/rejected, chat appends
- * turns, and POST /eval/run appends a new scorecard.
+ * turns, and POST /eval/run starts a job (202) whose result is read from GET /eval/jobs/{id}.
  */
 
 import { createServer } from 'node:http';
@@ -107,6 +107,8 @@ const state = {
     },
   ],
   evalRuns: [],
+  evalJobs: new Map(),
+  evalRunning: false,
 };
 
 // ---------------------------------------------------------------- traces
@@ -857,8 +859,20 @@ const server = createServer(async (req, res) => {
       return json(res, 200, run);
     }
 
+    const jobMatch = path.match(/^\/eval\/jobs\/([^/]+)$/);
+    if (jobMatch && method === 'GET') {
+      const job = state.evalJobs.get(decodeURIComponent(jobMatch[1]));
+      if (!job) return json(res, 404, { detail: `Unknown eval job '${jobMatch[1]}'` });
+      // report "running" for the first couple of polls so the dashboard's polling path is exercised
+      job.polls += 1;
+      if (job.polls < 2) return json(res, 200, { ...job.summary, status: 'running' });
+      return json(res, 200, { ...job.summary, status: 'done', finished_at: iso(), run_id: job.card.run_id, scorecard: job.card });
+    }
+
     if (path === '/eval/run' && method === 'POST') {
-      await sleep(Math.max(1500, LATENCY_MS * 6));
+      // Like the real backend: the run is a background job. 202 + a job id; poll /eval/jobs/{id}.
+      if (state.evalRunning) return json(res, 409, { detail: 'an eval run is already in progress' });
+      await sleep(Math.max(300, LATENCY_MS));
       const prevRun = state.evalRuns[0] ?? null;
       const index = state.evalRuns.length;
       const shape = {
@@ -885,7 +899,10 @@ const server = createServer(async (req, res) => {
       const card = buildScorecard(index, shape, prevShape, prevRun?.run_id ?? null);
       card.ts = iso();
       state.evalRuns.unshift(card);
-      return json(res, 200, card);
+      const jobId = `job_${Math.random().toString(36).slice(2, 10)}`;
+      const summary = { job_id: jobId, status: 'running', mode: 'mock', started_at: iso(), finished_at: null, run_id: null, error: null };
+      state.evalJobs.set(jobId, { summary, card, polls: 0 });
+      return json(res, 202, summary);
     }
 
     return json(res, 404, { detail: `No route for ${method} ${path}` });

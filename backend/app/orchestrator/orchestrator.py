@@ -82,6 +82,16 @@ class Orchestrator:
         listing = "\n".join(f"- {a.name}: {a.description}" for a in self.agents)
         return DEFAULT_SYSTEM_PROMPT.format(agents=listing)
 
+    @staticmethod
+    def _truncated_answer(steps: list[RoutedStep]) -> str:
+        """The loop's `<max iterations reached>` sentinel is for the harness and the eval, not a
+        person. Give the user what the agents actually produced, plus an honest note."""
+        found = [f"**{s.agent}**: {s.result.text}" for s in steps if s.result is not None and s.result.text]
+        note = "I stopped before reaching a final answer (step limit reached)."
+        if not found:
+            return note + " Try a narrower request."
+        return note + " Here is what the agents reported so far:\n\n" + "\n\n".join(found)
+
     async def handle(
         self,
         user_message: str,
@@ -113,8 +123,11 @@ class Orchestrator:
         )
         steps = [RoutedStep(e["decision"], e["result"]) for e in ledger]  # call order, not agent-list order
         agent_results = [s.result for s in steps if s.result is not None]
+        text = loop_result.text
+        if loop_result.truncated:
+            text = self._truncated_answer(steps)
         return OrchestratorResult(
-            text=loop_result.text,
+            text=text,
             turn_id=turn_id,
             steps=steps,
             route_decisions=[s.decision for s in steps],

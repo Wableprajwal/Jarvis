@@ -428,8 +428,14 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
+  /* The rail stacks above the thread; give the list a real scroll area instead of letting the
+     footer (user id) cover the second session. */
   .chat__rail {
-    max-height: 200px;
+    max-height: 260px;
+  }
+
+  .chat__raillist {
+    max-height: 132px;
   }
 
   .chat__thread,

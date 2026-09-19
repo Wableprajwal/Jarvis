@@ -124,7 +124,7 @@ Two layers, because "did it pick the right agent" and "was the answer any good" 
 ```bash
 make eval          # offline: MockProvider + a simulated router. This is the CI gate.
 make eval-live     # real model + real judge. Slower, and the number that actually means something.
-curl -X POST localhost:8000/eval/run    # same thing through the API; the dashboard renders it
+curl -X POST localhost:8000/eval/run    # -> 202 {job_id}; poll /eval/jobs/{job_id}. The dashboard does this for you.
 ```
 
 How the offline gate stays meaningful with no model: routing scenarios run against a deterministic policy whose decision

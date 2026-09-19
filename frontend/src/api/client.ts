@@ -16,6 +16,7 @@ import type {
   Health,
   Metrics,
   PendingConfirmation,
+  EvalJob,
   Scorecard,
   SessionSummary,
   StoredMessage,
@@ -164,7 +165,9 @@ export const api = {
       body: { approve },
     }),
 
-  runEval: (o?: RequestOptions) => request<Scorecard>('/eval/run', { ...o, method: 'POST' }),
+  runEval: (o?: RequestOptions) => request<EvalJob>('/eval/run', { ...o, method: 'POST' }),
+  evalJob: (jobId: string, o?: RequestOptions) =>
+    request<EvalJob>(`/eval/jobs/${encodeURIComponent(jobId)}`, o),
 
   evalRuns: (o?: RequestOptions) => requestList<Scorecard>('/eval/runs', o),
 

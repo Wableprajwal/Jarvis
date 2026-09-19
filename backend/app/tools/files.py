@@ -9,6 +9,7 @@ import re
 from pathlib import Path
 
 from app.providers.base import ModelProvider
+from app.tools.paths import PathRefused, resolve_inside
 from app.tools.registry import Tool, ToolResult
 
 MAX_READ_BYTES = 200_000
@@ -35,11 +36,10 @@ class ReadFileTool(Tool):
         self._root = Path(root).resolve()
 
     async def execute(self, arguments: dict) -> ToolResult:
-        target = (self._root / arguments["path"]).resolve()
-        if not target.is_relative_to(self._root):
-            return ToolResult.failure("path escapes the workspace root")
-        if not target.is_file():
-            return ToolResult.failure(f"file not found: {arguments['path']}")
+        try:
+            target = resolve_inside(self._root, arguments["path"])
+        except PathRefused as exc:
+            return ToolResult.failure(str(exc))
         if target.stat().st_size > MAX_READ_BYTES:
             return ToolResult.failure(f"file too large (> {MAX_READ_BYTES} bytes)")
         text = await asyncio.to_thread(target.read_text, "utf-8", "replace")
@@ -93,9 +93,10 @@ class GitDiffSummarizeTool(Tool):
             return ToolResult.failure("invalid git ref")
         path = arguments.get("path")
         if path is not None:
-            target = (self._root / path).resolve()
-            if not target.is_relative_to(self._root):
-                return ToolResult.failure("path escapes the workspace root")
+            try:
+                resolve_inside(self._root, path, must_exist=False)  # may be a directory or a deleted file
+            except PathRefused as exc:
+                return ToolResult.failure(str(exc))
         flags = ["--cached"] if arguments.get("staged") else []
         tail = ["--", path] if path else []
         code, stat, err = await self._git("diff", *flags, "--stat", base, *tail)
@@ -144,9 +145,10 @@ class GenerateTestsTool(Tool):
         self._max_attempts = max_attempts
 
     async def execute(self, arguments: dict) -> ToolResult:
-        src = (self._root / arguments["path"]).resolve()
-        if not src.is_relative_to(self._root) or not src.is_file():
-            return ToolResult.failure(f"file not found: {arguments['path']}")
+        try:
+            src = resolve_inside(self._root, arguments["path"])
+        except PathRefused as exc:
+            return ToolResult.failure(str(exc))
         if src.stat().st_size > MAX_READ_BYTES:
             return ToolResult.failure("file too large")
         source = await asyncio.to_thread(src.read_text, "utf-8", "replace")

@@ -23,8 +23,13 @@ services:
       OLLAMA_HOST: http://host.docker.internal:11434   # Ollama runs on the host (GPU/Metal access)
       MODEL_PROVIDER: ollama
       DOCS_DIR: /srv/docs
+      WORKSPACE_ROOT: /workspace
     volumes:
       - ./docs:/srv/docs:ro
+      # The tree the Code agent may read and the sandbox may stage files from. The sample
+      # workspace ships small, real Python files (utils/retry.py, config_loader.py, ...) so the
+      # demo prompts work; point this at a repository of your own to ask about real code.
+      - ./backend/app/eval/fixtures/workspace:/workspace:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:

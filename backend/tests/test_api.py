@@ -163,24 +163,56 @@ async def test_chat_validates_input():
     await run([], go)
 
 
-async def test_eval_endpoints_produce_and_list_scorecards():
+async def _wait_for_job(http, job_id: str, tries: int = 200) -> dict:
+    import asyncio
+
+    for _ in range(tries):
+        job = (await http.get(f"/eval/jobs/{job_id}")).json()
+        if job["status"] != "running":
+            return job
+        await asyncio.sleep(0.02)
+    raise AssertionError("eval job did not finish")
+
+
+async def test_eval_run_is_an_async_job_that_produces_and_lists_scorecards():
+    """A live eval takes ~15 min; a synchronous request 504'd behind nginx. POST returns a job id."""
+
     async def go(c, _):
-        first = await c.http.post("/eval/run")
-        assert first.status_code == 200, first.text
-        card = first.json()
+        started = await c.http.post("/eval/run")
+        assert started.status_code == 202, started.text
+        job = started.json()
+        assert job["status"] == "running" and job["job_id"] and "scorecard" not in job
+
+        done = await _wait_for_job(c.http, job["job_id"])
+        assert done["status"] == "done" and done["error"] is None and done["finished_at"]
+        card = done["scorecard"]
+        assert card["run_id"] == done["run_id"]
         assert set(card["scores_by_category"]) == {"routing", "tool-selection", "RAG-grounding", "memory-recall", "refusal/edge-case"}
         assert card["regressions"] == [] and card["previous_run_id"] is None
         assert all({"scenario_id", "category", "layer", "passed"} <= set(d) for d in card["details"])
 
-        second = (await c.http.post("/eval/run")).json()
-        assert second["previous_run_id"] == card["run_id"]
+        second = await _wait_for_job(c.http, (await c.http.post("/eval/run")).json()["job_id"])
+        assert second["scorecard"]["previous_run_id"] == card["run_id"]
         runs = (await c.http.get("/eval/runs")).json()
         assert [r["run_id"] for r in runs][:2] == [second["run_id"], card["run_id"]]
         assert (await c.http.get(f"/eval/runs/{card['run_id']}")).json()["run_id"] == card["run_id"]
         assert (await c.http.get("/eval/runs/nope")).status_code == 404
+        assert (await c.http.get("/eval/jobs/nope")).status_code == 404
 
     await run([], go)
 
+
+async def test_only_one_eval_job_runs_at_a_time():
+    async def go(c, _):
+        first = (await c.http.post("/eval/run")).json()
+        # the endpoint takes the lock before returning, so a second start is refused deterministically
+        assert (await c.http.post("/eval/run")).status_code == 409
+        await _wait_for_job(c.http, first["job_id"])
+        third = await c.http.post("/eval/run")
+        assert third.status_code == 202
+        await _wait_for_job(c.http, third.json()["job_id"])
+
+    await run([], go)
 
 async def test_api_end_to_end_with_real_postgres(db):
     script = [
