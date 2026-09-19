@@ -1,0 +1,12 @@
+# The image only needs requirements.txt and app/. Everything else just slows the build:
+# .venv alone is ~1.1 GB of build context sent to the daemon on every build.
+.venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+tests/
+.env

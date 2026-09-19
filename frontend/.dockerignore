@@ -1,0 +1,7 @@
+# node_modules must not be copied: the image installs its own with `npm ci`, and a host-built
+# tree (different platform/arch) would silently overwrite it after the install layer.
+node_modules/
+dist/
+*.tsbuildinfo
+.env
+.env.*
