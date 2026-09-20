@@ -47,6 +47,31 @@ async def backend(request) -> SandboxBackend:
 
 
 @pytest.fixture
+async def docker_backend() -> SandboxBackend:
+    """For properties specific to the container backend; skips when Docker or the image is absent."""
+    b = _instances.setdefault("docker", DockerBackend())
+    reason = await b.verify()
+    if reason is not None:
+        pytest.skip(f"docker sandbox backend unavailable on this host: {reason}")
+    return b
+
+
+# A namespace-based sandbox (Docker's `--network none`) gives the code its OWN loopback interface. Talking to
+# it never leaves the container, so it is not egress - unlike Seatbelt, which denies even loopback. Backends
+# in this set are allowed to complete loopback-only probes; everything else must block them too, and EVERY
+# backend is held to the host-side ground truth (no listener on the host ever sees a packet).
+PRIVATE_LOOPBACK_BACKENDS = {"docker"}
+# Backends that mount a private, size-capped, noexec tmpfs at /tmp inside the sandbox.
+PRIVATE_TMPFS_BACKENDS = {"docker"}
+
+
+def _outcomes(stdout: str) -> dict[str, str]:
+    """'REACHED name' / 'BLOCKED name Err' lines -> {name: 'REACHED' | 'BLOCKED'}."""
+    rows = (line.split() for line in stdout.splitlines())
+    return {parts[1]: parts[0] for parts in rows if len(parts) >= 2 and parts[0] in ("REACHED", "BLOCKED")}
+
+
+@pytest.fixture
 async def any_backend() -> SandboxBackend:
     b, reasons = await select_backend(candidates=[_instances.setdefault(n, _CTORS[n]()) for n in BACKENDS])
     if b is None:
@@ -127,11 +152,16 @@ async def test_stdlib_works_and_harness_packages_are_invisible(backend):
 # network
 # ---------------------------------------------------------------------------------------------
 async def test_no_network_tcp_dns_udp_http(backend):
-    srv = socket.socket()
-    srv.bind(("127.0.0.1", 0))
-    srv.listen(5)
-    srv.settimeout(0.3)
-    port = srv.getsockname()[1]
+    """Nothing may leave the sandbox. The ground truth is on the HOST: listeners bound there must never
+    see a connection or a datagram, whatever the probes inside report."""
+    tcp = socket.socket()
+    tcp.bind(("127.0.0.1", 0))
+    tcp.listen(5)
+    tcp.settimeout(0.3)
+    udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    udp.bind(("127.0.0.1", 0))
+    udp.settimeout(0.3)
+    tport, uport = tcp.getsockname()[1], udp.getsockname()[1]
     code = f"""
 import socket, urllib.request
 def attempt(name, fn):
@@ -139,22 +169,54 @@ def attempt(name, fn):
         fn(); print("REACHED", name)
     except BaseException as e:
         print("BLOCKED", name, type(e).__name__)
-attempt("tcp-localhost", lambda: socket.create_connection(("127.0.0.1", {port}), timeout=3))
+attempt("tcp-localhost", lambda: socket.create_connection(("127.0.0.1", {tport}), timeout=3))
 attempt("tcp-external-ip", lambda: socket.create_connection(("1.1.1.1", 80), timeout=3))
 attempt("dns", lambda: socket.getaddrinfo("example.com", 80))
-attempt("dns-localhost", lambda: socket.getaddrinfo("localhost", {port}))
-attempt("udp", lambda: socket.socket(socket.AF_INET, socket.SOCK_DGRAM).sendto(b"x", ("127.0.0.1", {port})))
-attempt("http", lambda: urllib.request.urlopen("http://127.0.0.1:{port}/", timeout=3))
+attempt("http", lambda: urllib.request.urlopen("http://127.0.0.1:{tport}/", timeout=3))
+attempt("udp-external", lambda: socket.socket(socket.AF_INET, socket.SOCK_DGRAM).sendto(b"x", ("1.1.1.1", 53)))
+attempt("dns-localhost", lambda: socket.getaddrinfo("localhost", {tport}))
+attempt("udp-localhost", lambda: socket.socket(socket.AF_INET, socket.SOCK_DGRAM).sendto(b"x", ("127.0.0.1", {uport})))
 """
     try:
         r = await run(backend, code)
         assert r.exit_code == 0, r.stderr
-        assert "REACHED" not in r.stdout, r.stdout
-        assert r.stdout.count("BLOCKED") == 6
-        with pytest.raises((TimeoutError, socket.timeout)):  # the listener never saw a connection
-            srv.accept()
+        got = _outcomes(r.stdout)
+        assert len(got) == 7, r.stdout
+
+        must_block = {"tcp-localhost", "tcp-external-ip", "dns", "http", "udp-external"}
+        if backend.name not in PRIVATE_LOOPBACK_BACKENDS:
+            must_block |= {"dns-localhost", "udp-localhost"}
+        leaked = sorted(n for n in must_block if got[n] != "BLOCKED")
+        assert not leaked, f"{backend.name}: reachable from inside the sandbox: {leaked}\n{r.stdout}"
+
+        # Ground truth: the host's own listeners saw nothing. (For a private-loopback backend this is what
+        # proves "REACHED udp-localhost" was the container talking to itself, not to us.)
+        with pytest.raises((TimeoutError, socket.timeout)):
+            tcp.accept()
+        with pytest.raises((TimeoutError, socket.timeout)):
+            udp.recvfrom(64)
     finally:
-        srv.close()
+        tcp.close()
+        udp.close()
+
+
+async def test_docker_container_has_no_route_off_its_own_loopback(docker_backend):
+    """Why loopback-only success is not an escape: the container's routing table is empty, so there is
+    no path to the gateway, the host or anything else."""
+    r = await run(
+        docker_backend,
+        "import socket\n"
+        "print('ROUTES', open('/proc/net/route').read().splitlines()[1:])\n"
+        "for name, addr in [('gateway', '172.17.0.1'), ('host.docker.internal', '192.168.65.254')]:\n"
+        "    try:\n"
+        "        socket.socket(socket.AF_INET, socket.SOCK_DGRAM).sendto(b'x', (addr, 9)); print('REACHED', name)\n"
+        "    except OSError as e:\n"
+        "        print('BLOCKED', name, e.errno)\n",
+    )
+    assert r.exit_code == 0, r.stderr
+    assert "ROUTES []" in r.stdout, r.stdout
+    assert _outcomes(r.stdout) == {"gateway": "BLOCKED", "host.docker.internal": "BLOCKED"}, r.stdout
+    assert "101" in r.stdout  # ENETUNREACH: there is no route, as opposed to a filtered one
 
 
 async def test_no_unix_socket_access(backend, tmp_path):
@@ -317,12 +379,42 @@ async def test_cannot_write_outside_scratch(backend, canary, tmp_path, workspace
     )
     r = await run(backend, code)
     assert r.exit_code == 0, r.stderr
-    assert "WROTE" not in r.stdout, r.stdout
+    # Seatbelt denies every write outside the scratch dir. Docker's rootfs is read-only too, but it mounts a
+    # small private tmpfs at /tmp (Python needs somewhere to put temp files); a write there succeeds inside
+    # the container and is discarded with it. So the /tmp target may report WROTE on that backend - and ONLY
+    # that one. What must hold everywhere is the host-side check below: nothing landed on the host.
+    tmp_target = str(Path("/tmp") / "jarvis_sandbox_evil_DELETE_ME.txt")
+    wrote = {line.split(maxsplit=1)[1] for line in r.stdout.splitlines() if line.startswith("WROTE ")}
+    allowed = {tmp_target} if backend.name in PRIVATE_TMPFS_BACKENDS else set()
+    assert wrote <= allowed, f"{backend.name}: writes escaped the scratch dir: {sorted(wrote - allowed)}\n{r.stdout}"
     assert "INSIDE" in r.stdout
     assert canary.read_text() == "CANARY-7f3a9c1e-outside-scope\n"
     for t in targets[:1] + targets[2:]:
         assert not t.exists(), t
     assert not (tmp_path / "outside" / "newdir").exists() and not (tmp_path / "outside" / "lnk").exists()
+
+
+async def test_docker_tmp_is_a_small_noexec_tmpfs_and_the_rootfs_is_read_only(docker_backend):
+    """The one place Docker allows a write outside /work is bounded and inert."""
+    r = await run(
+        docker_backend,
+        "import os, shutil, subprocess\n"
+        "print('TMPFS', 'tmpfs' in subprocess.run(['df', '/tmp'], capture_output=True, text=True).stdout)\n"
+        "try:\n    open('/etc/jarvis_evil', 'w').write('x'); print('ROOT-WRITABLE')\n"
+        "except OSError as e:\n    print('ROOT-RO', e.errno)\n"
+        "try:\n    open('/tmp/big', 'wb').write(b'x' * (64 * 1024 * 1024)); print('BIG-OK')\n"
+        "except OSError as e:\n    print('BIG-REFUSED')\n"
+        "print('FILLED', os.path.getsize('/tmp/big'))\n"  # the refused write still fills the tmpfs to its cap
+        "os.unlink('/tmp/big')\n"                             # ...so free it before the exec check needs room
+        "shutil.copy('/bin/true', '/tmp/t'); os.chmod('/tmp/t', 0o755)\n"
+        "try:\n    subprocess.run(['/tmp/t'], check=True); print('EXEC-OK')\n"
+        "except (OSError, subprocess.SubprocessError) as e:\n    print('EXEC-REFUSED', type(e).__name__)\n",
+    )
+    assert r.exit_code == 0, r.stderr
+    assert "TMPFS True" in r.stdout and "ROOT-RO 30" in r.stdout, r.stdout  # 30 == EROFS
+    assert "BIG-REFUSED" in r.stdout and "BIG-OK" not in r.stdout, r.stdout  # 16 MB cap
+    assert f"FILLED {16 * 1024 * 1024}" in r.stdout, r.stdout  # and the cap is exactly 16 MiB, not "roughly small"
+    assert "EXEC-REFUSED" in r.stdout and "EXEC-OK" not in r.stdout, r.stdout  # noexec
 
 
 async def test_scratch_is_deleted_afterwards(backend):
@@ -361,6 +453,21 @@ attempt("execv", lambda: os.execv("/bin/cat", ["cat", {str(canary)!r}]))
 # ---------------------------------------------------------------------------------------------
 # environment / credentials
 # ---------------------------------------------------------------------------------------------
+def _docker_image_env_keys(backend) -> set[str]:
+    """Variable names the container image itself declares (ENV in its Dockerfile) - public constants of the
+    image, present whatever the harness does. Read from the image, not hard-coded, so a base-image bump
+    does not silently change what this test permits."""
+    out = subprocess.check_output(
+        [backend._docker, "image", "inspect", backend.image, "--format", "{{json .Config.Env}}"], text=True
+    )
+    return {entry.split("=", 1)[0] for entry in json.loads(out)}
+
+
+# What the sandbox launchers themselves set (Docker also sets HOSTNAME because `--hostname sandbox` is passed).
+BACKEND_SET_ENV = {"PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "PYTHONIOENCODING", "TERM", "PWD", "LC_CTYPE",
+                   "__CF_USER_TEXT_ENCODING"}
+
+
 async def test_child_cannot_see_harness_env(backend, monkeypatch):
     monkeypatch.setenv("JARVIS_CANARY_SECRET", "env-canary-3c9d7e11")
     monkeypatch.setenv("GMAIL_TOKEN", "gmail-canary-token-99182")
@@ -375,9 +482,19 @@ async def test_child_cannot_see_harness_env(backend, monkeypatch):
     for needle in ("env-canary-3c9d7e11", "gmail-canary-token-99182", "aws-canary-55aa", "GMAIL_TOKEN"):
         assert needle not in r.stdout
     env = json.loads(r.stdout.splitlines()[0])
-    assert set(env) <= {"PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "PYTHONIOENCODING", "TERM", "PWD",
-                        "LC_CTYPE", "__CF_USER_TEXT_ENCODING"}, sorted(env)
     assert "None None" in r.stdout
+
+    # The strong claim: no VALUE from the harness's own environment reaches the child. (Checking names alone
+    # is only a proxy - a leaked secret could arrive under a name that happens to be on an allow-list.)
+    harness_only = {k: v for k, v in os.environ.items() if k not in BACKEND_SET_ENV and len(v) >= 12}
+    leaked = sorted(k for k, v in harness_only.items() if v in r.stdout)
+    assert not leaked, f"harness environment values visible inside the sandbox: {leaked}"
+
+    # And the names: exactly what the launcher sets, plus - for a container - what its image declares.
+    allowed = set(BACKEND_SET_ENV)
+    if backend.name == "docker":
+        allowed |= _docker_image_env_keys(backend) | {"HOSTNAME"}
+    assert set(env) <= allowed, f"{backend.name}: unexplained variables: {sorted(set(env) - allowed)}"
 
 
 async def test_child_does_not_inherit_harness_file_descriptors(backend, tmp_path):

@@ -789,12 +789,14 @@ class DockerBackend(SandboxBackend):
 
     name = "docker"
     enforcement = {
-        "network": "--network none",
-        "filesystem": "--read-only rootfs; tmpfs /work; files bind-mounted :ro; nothing else mounted",
+        "network": "--network none: no route off the container's own private loopback (empty routing table)",
+        "filesystem": "--read-only rootfs; tmpfs /work (scratch) and a 16 MiB noexec tmpfs /tmp, both private to "
+                      "the container and destroyed with it; files bind-mounted :ro; nothing else mounted",
         "timeout": "watchdog + `docker kill` + killpg of the CLI",
         "memory": "--memory/--memory-swap (cgroup); OOM detected via inspect",
         "user": "--user 65534:65534, --cap-drop ALL, no-new-privileges",
-        "env": "docker run inherits nothing; only an explicit -e allow-list",
+        "env": "nothing is inherited from the harness; the container sees its image's declared ENV plus an "
+               "explicit -e allow-list",
         "processes": "--pids-limit",
     }
 

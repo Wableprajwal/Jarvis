@@ -460,3 +460,37 @@ package; and a numpy>=2.5 pin must be marker-guarded off 3.11. Confirmed it is n
 pin - two tests fail - then restoring the fix. `make setup` had the same blind spot (it hard-coded `python3.12`, so a
 3.11-only machine failed before pip ran); it now picks the first of 3.12/3.11 it finds, accepts `PYTHON=`, and fails with an
 actionable message otherwise. The README had never stated a Python requirement at all; it now does.
+
+## The Docker sandbox backend was never actually tested - and what running it showed
+
+Asked "did all the tests pass?", the honest answer was "515 passed, 87 skipped" - and the skips deserved suspicion, not a
+shrug. 26 of them were the Docker sandbox backend, skipped because the base image (`python:3.12-slim`) was not pulled
+locally, although the Docker daemon was running. Every claim in DECISIONS.md about the container backend had therefore
+been asserted by code review only. Pulling a ~50 MB image made those tests run, and **three failed**.
+
+Investigated before changing anything, with the host as ground truth rather than the probes' own output. All three were
+tests that encoded macOS-Seatbelt semantics onto a different isolation model, not holes in the sandbox:
+
+- **Network.** "REACHED" on `getaddrinfo("localhost")` and a UDP `sendto(127.0.0.1)`. `--network none` gives the container
+  its own private loopback with an *empty routing table*; sending to the gateway or `host.docker.internal` fails with
+  ENETUNREACH, and listeners bound on the host received nothing. Seatbelt denies even loopback; a namespace cannot, and
+  loopback inside its own namespace is not egress.
+- **Writes.** A write to `/tmp` succeeded - into the 16 MiB `noexec` tmpfs the backend deliberately mounts there, which is
+  destroyed with the container; the file does not exist on the host, the root filesystem is read-only (EROFS), and the
+  cap is exact (a refused 64 MB write left precisely 16,777,216 bytes).
+- **Environment.** Extra variables (`GPG_KEY`, `PYTHON_VERSION`, `PYTHON_SHA256`) are the base image's own declared `ENV`
+  plus `HOSTNAME` from `--hostname`; none of the harness's canary secrets were visible.
+
+Chose to fix the tests to assert the real invariant, per backend, rather than either deleting assertions or forcing the
+container to mimic Seatbelt. Every backend is now held to host-side ground truth (a TCP and a UDP listener on the host that
+must never be touched); backends I cannot run here (bwrap, unshare) and Seatbelt keep the strict "everything blocked"
+form, so nothing that was verified got weaker. The environment check got *stronger*: it now asserts no **value** from the
+harness environment appears inside the sandbox (a name allow-list is only a proxy), and the allowed names come from the
+image's own metadata rather than a hard-coded list. New Docker-only tests pin the properties that make it different:
+empty routing table, `/tmp` is a 16 MiB `noexec` tmpfs, read-only root.
+
+Checked the rewritten tests can still fail, by breaking the sandbox: dropping `--network none` fails both network tests
+naming `dns`, `tcp-external-ip` and `udp-external` as reached; dropping `--read-only` fails the dedicated rootfs test
+(the older write test still passes there, correctly - the container runs as `nobody`, so file permissions block `/etc`
+anyway; defence in depth is why the read-only control gets its own test). Also corrected `DockerBackend`'s documented
+`enforcement` notes, which had omitted the `/tmp` tmpfs and overstated env isolation as "only an explicit allow-list".
