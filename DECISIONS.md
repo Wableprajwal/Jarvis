@@ -432,3 +432,31 @@ the Ops agent for "using the calendar_list tool" to answer a calendar question, 
 drafting (a fair complaint), and for a citation phrasing on the coverage gate while calling the value correct. Left as
 reported. The four-run trend on the dashboard - flat, dip to 17%, recovery - is the artefact to show: the regression was
 real, was caught by the eval and not by tests or health checks, and was fixed with the eval as the proof.
+
+
+## Packaging: a reported install bug, what was actually wrong, and the guard
+
+A review flagged `numpy==2.5.3` in `requirements.txt` and `pyproject.toml` as a version that "doesn't exist" and proposed
+`numpy>=1.26,<3`. The premise was wrong - 2.5.3 exists on PyPI and is the current release; it is what the tests and the
+Docker image were built against. Checked rather than assumed, and the check found the *real* defect one level down:
+numpy 2.5 requires **Python >= 3.12**, while `pyproject.toml` declares `requires-python >= 3.11`. On 3.11,
+`pip install -r requirements.txt` failed with "No matching distribution found for numpy==2.5.3" - so the symptom the
+reviewer worried about (a fresh install breaking for someone) was real, just not for the reason stated.
+
+Then verified what the pyproject claim was worth, on a real Python 3.11 rather than by inspection: the full dev environment
+installs in ~30 s and **the entire suite passes on 3.11** (515 tests, same as 3.12). So the right fix is to make the pins
+honour the claim, not to shrink the claim to match one pin.
+
+Chose exact pins **per interpreter via environment markers** (`numpy==2.5.3; python_version >= "3.12"`, `numpy==2.4.6;
+python_version < "3.12"`) over the suggested range `numpy>=1.26,<3`, because: a range would leave numpy the only unpinned
+dependency in a file whose spec says "pin versions"; it would resolve to different numpy versions on different machines,
+so a failure would not reproduce; and its `1.26` floor is a claim nobody tested. Both pins in the markers *were* run: 2.5.3
+on 3.12 and 2.4.6 on 3.11, each passing the full suite. Accepted tradeoff: two numpy lines to bump instead of one.
+
+The root cause was that nothing compared the two dependency files with each other or with the Python range they claim, so a
+contradiction could sit there unnoticed. `tests/test_packaging.py` now fails on exactly that: every dependency is an exact
+pin; `pyproject.toml` and `requirements.txt` declare the same pins; every claimed Python gets exactly one applicable pin per
+package; and a numpy>=2.5 pin must be marker-guarded off 3.11. Confirmed it is not vacuous by restoring the original single
+pin - two tests fail - then restoring the fix. `make setup` had the same blind spot (it hard-coded `python3.12`, so a
+3.11-only machine failed before pip ran); it now picks the first of 3.12/3.11 it finds, accepts `PYTHON=`, and fails with an
+actionable message otherwise. The README had never stated a Python requirement at all; it now does.

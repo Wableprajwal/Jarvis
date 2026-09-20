@@ -10,6 +10,10 @@ PyYAML==6.0.3
 uvicorn==0.53.0
 # RAG: local embeddings + reranking, independent of the chat model. sentence-transformers pulls in
 # torch, which dominates image size; a CPU-only torch index slims it considerably.
-numpy==2.5.3
+# numpy 2.5 requires Python >= 3.12; 3.11 resolves 2.4.x. Exact pins per interpreter, each verified:
+# 2.5.3 on 3.12 and 2.4.6 on 3.11 both pass the full suite. (A range would leave numpy the one
+# unpinned dependency and resolve differently per machine.)
+numpy==2.5.3; python_version >= "3.12"
+numpy==2.4.6; python_version < "3.12"
 rank-bm25==0.2.2
 sentence-transformers==6.1.0

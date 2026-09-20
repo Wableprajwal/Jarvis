@@ -82,6 +82,8 @@ implementation, so nothing breaks. Without any database at all, the app degrades
 Offline and without the cache, the app still starts — the Research agent just has no `rag_search` tool and says so.
 
 ### 3. Backend
+Needs **Python 3.11 or 3.12** (both run the full suite; `make setup` picks whichever it finds first, or pass
+`PYTHON=/path/to/python`). Docker users need neither.
 ```bash
 make setup                   # venv + pinned requirements
 make ingest                  # embed the sample notes in docs/ for the Research agent (idempotent)

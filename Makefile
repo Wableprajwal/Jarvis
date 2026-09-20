@@ -1,8 +1,13 @@
 PY ?= backend/.venv/bin/python
 .PHONY: setup setup-db dev lint test eval eval-live eval-regression-demo ingest up down frontend frontend-test check clean
 
+# Base interpreter for the venv: the first tested version found (3.12, else 3.11). Override with
+# `make setup PYTHON=/path/to/python` - anything >= 3.11 satisfies pyproject.
+PYTHON ?= $(shell for p in python3.12 python3.11; do command -v $$p >/dev/null 2>&1 && echo $$p && break; done)
+
 setup:
-	python3.12 -m venv backend/.venv
+	@test -n "$(PYTHON)" || { echo "Python 3.11 or 3.12 not found. Install one, or run: make setup PYTHON=/path/to/python"; exit 1; }
+	$(PYTHON) -m venv backend/.venv
 	backend/.venv/bin/pip install -r backend/requirements-dev.txt
 
 ## Create the separate database the test suite uses, so tests never write to the dev database.
